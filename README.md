@@ -10,6 +10,7 @@ This repository bootstraps a Codex-only multi-agent workflow that runs in a sing
 - `scripts/resume_team.sh`: resume after shutdown
 - `scripts/team_status.sh`: runtime status
 - `scripts/run_pipeline.sh`: one-command pipeline create + execute
+- `scripts/run_fresh_project.sh`: create isolated project folder + run from scratch
 - `scripts/start_team_tmux.sh`: start tmux multi-pane cockpit
 - `scripts/stop_team_tmux.sh`: stop tmux cockpit + team
 - `scripts/setup_workspaces.sh`: create per-role git workspaces (worktree)
@@ -126,6 +127,17 @@ Optional flags:
 - `--continue-on-failure`
 - `--stop-when-done`
 - `--skip-auth-check`
+
+Run in a brand-new isolated project directory (recommended for fresh starts):
+
+```bash
+./scripts/run_fresh_project.sh \
+  --name "browser-game-mvp" \
+  --brief "Build a playable browser game loop and ship-ready checklist." \
+  --profile low-spec
+```
+
+This creates a new folder under `projects/`, stores state/events inside that folder, and runs the full pipeline there.
 
 ## Role workspaces and git/github
 

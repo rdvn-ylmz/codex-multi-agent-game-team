@@ -222,6 +222,12 @@ def read_workspace_config() -> dict[str, Any]:
 
 
 def resolve_role_workdir(role: str) -> Path:
+    project_root_override = os.getenv("TEAM_PROJECT_ROOT", "").strip()
+    if project_root_override:
+        project_root = Path(project_root_override).expanduser().resolve()
+        if project_root.exists() and project_root.is_dir():
+            return project_root
+
     config = read_workspace_config()
     use_role_workspaces = bool(config.get("use_role_workspaces_if_present", True))
     if not use_role_workspaces:

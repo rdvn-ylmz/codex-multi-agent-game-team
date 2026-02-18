@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -17,6 +18,7 @@ class OrchestratorTests(unittest.TestCase):
     def tearDown(self) -> None:
         orchestrator.append_event = self._original_append_event
         orchestrator.WORKSPACE_CONFIG_FILE = self._original_workspace_config_file
+        os.environ.pop("TEAM_PROJECT_ROOT", None)
 
     def test_parse_yaml_id_list_reads_values(self) -> None:
         tmp_dir = Path(self._testMethodName)
@@ -192,6 +194,13 @@ workflow:
             orchestrator.WORKSPACE_CONFIG_FILE = cfg_path
             resolved = orchestrator.resolve_role_workdir("coder")
             self.assertEqual(resolved, role_dir.resolve())
+
+    def test_resolve_role_workdir_uses_project_root_override(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="project-root-") as tmp:
+            project_root = Path(tmp).resolve()
+            os.environ["TEAM_PROJECT_ROOT"] = str(project_root)
+            resolved = orchestrator.resolve_role_workdir("coder")
+            self.assertEqual(resolved, project_root)
 
     def test_recover_inflight_tasks_requeues_running_items(self) -> None:
         state = orchestrator.new_state()
