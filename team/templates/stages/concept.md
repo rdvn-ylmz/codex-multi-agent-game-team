@@ -71,10 +71,14 @@ Provide file contents in your response (ready to paste).
   "task_id": "",
   "owner": "concept",
   "status": "done",
+  "acceptance_criteria": ["Concept summary, pillars, loop, and scope are defined"],
   "artifacts": [
     { "type": "doc", "path": "docs/concept.md" }
   ],
   "handoff_to": ["game_design"],
-  "risks": []
+  "risks": [],
+  "next_role_action_items": [
+    { "role": "game_design", "items": ["Convert concept pillars and scope into implementable systems"] }
+  ]
 }
 ```

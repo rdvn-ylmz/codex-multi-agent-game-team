@@ -41,6 +41,42 @@ workflow:
                 child.unlink()
             tmp_dir.rmdir()
 
+    def test_read_default_debate_roles_falls_back_to_available_roles(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="debate-roles-") as tmp:
+            tmp_path = Path(tmp)
+            config_dir = tmp_path / "config"
+            config_dir.mkdir(parents=True, exist_ok=True)
+
+            (config_dir / "roles.yaml").write_text(
+                (
+                    "version: 1\n"
+                    "roles:\n"
+                    "  - id: orchestrator\n"
+                    "  - id: concept\n"
+                    "  - id: reviewer\n"
+                    "  - id: security\n"
+                ),
+                encoding="utf-8",
+            )
+            (config_dir / "workflow.yaml").write_text(
+                (
+                    "workflow:\n"
+                    "  default_debate:\n"
+                    "    - council_red\n"
+                    "    - council_blue\n"
+                    "    - council_green\n"
+                ),
+                encoding="utf-8",
+            )
+
+            original_config_dir = orchestrator.CONFIG_DIR
+            orchestrator.CONFIG_DIR = config_dir
+            try:
+                roles = orchestrator.read_default_debate_roles()
+                self.assertEqual(roles, ["concept", "reviewer", "security"])
+            finally:
+                orchestrator.CONFIG_DIR = original_config_dir
+
     def test_pipeline_dependencies_block_until_previous_stage_done(self) -> None:
         state = orchestrator.new_state()
 
@@ -211,6 +247,50 @@ workflow:
         self.assertTrue(any("acceptance criteria" in err for err in errors))
         self.assertTrue(any("artifacts" in err for err in errors))
         self.assertTrue(any("handoff" in err for err in errors))
+
+    def test_stage_templates_have_contract_compliant_json_footer(self) -> None:
+        roles = [
+            "orchestrator",
+            "concept",
+            "game_design",
+            "narrative",
+            "player_experience",
+            "coder",
+            "reviewer",
+            "qa",
+            "security",
+            "sre",
+            "devops",
+        ]
+        for role in roles:
+            template_path = orchestrator.STAGE_TEMPLATE_DIR / f"{role}.md"
+            template_text = template_path.read_text(encoding="utf-8")
+            contract = orchestrator.extract_output_contract(template_text)
+            self.assertIsNotNone(contract, f"{role} template JSON footer missing")
+            errors = orchestrator.validate_output_contract(role, {"id": "TASK-0001"}, contract)
+            self.assertEqual(errors, [], f"{role} template footer invalid: {errors}")
+
+    def test_build_task_compression_summary_outputs_valid_json_footer(self) -> None:
+        task = {"id": "TASK-9999", "title": "Implement API endpoint"}
+        contract = {
+            "task_id": "TASK-9999",
+            "owner": "coder",
+            "status": "needs_review",
+            "acceptance_criteria": ["criterion 1 PASS", "criterion 2 PASS"],
+            "artifacts": [
+                {"type": "files_changed", "value": ["src/api.py"]},
+                {"type": "commands", "value": ["./scripts/test.sh"]},
+            ],
+            "risks": ["rate limit not load-tested"],
+            "handoff_to": ["reviewer"],
+            "next_role_action_items": [{"role": "reviewer", "items": ["verify edge cases"]}],
+        }
+        summary = orchestrator.build_task_compression_summary(task, contract)
+        self.assertIn("IMMUTABLE SUMMARY", summary)
+        footer = orchestrator.extract_output_contract(summary)
+        self.assertIsNotNone(footer)
+        self.assertEqual(footer["type"], "compression_summary")
+        self.assertEqual(footer["next_owner"], "reviewer")
 
 
 if __name__ == "__main__":

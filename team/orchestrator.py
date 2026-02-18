@@ -164,8 +164,21 @@ def read_default_pipeline() -> list[str]:
 
 def read_default_debate_roles() -> list[str]:
     workflow_file = CONFIG_DIR / "workflow.yaml"
-    roles = _parse_yaml_id_list(workflow_file, "default_debate")
-    return roles or DEFAULT_DEBATE_ROLES
+    configured_roles = _parse_yaml_id_list(workflow_file, "default_debate")
+    candidate_roles = configured_roles or DEFAULT_DEBATE_ROLES
+
+    available_roles = set(read_role_ids())
+    filtered_roles = [role for role in candidate_roles if role in available_roles]
+    if filtered_roles:
+        return filtered_roles
+
+    non_orchestrator_roles = [
+        role for role in read_role_ids() if role != DEFAULT_DEBATE_MODERATOR
+    ]
+    if non_orchestrator_roles:
+        return non_orchestrator_roles[:3]
+
+    return candidate_roles
 
 
 def read_default_debate_moderator() -> str:
@@ -305,6 +318,134 @@ def _artifact_paths_from_contract(contract: dict[str, Any]) -> list[str]:
                 if isinstance(item, str):
                     paths.append(item.strip())
     return [path for path in paths if path]
+
+
+def _artifact_values_for_type(contract: dict[str, Any], artifact_type: str) -> list[str]:
+    artifacts = contract.get("artifacts")
+    if not isinstance(artifacts, list):
+        return []
+
+    values: list[str] = []
+    for artifact in artifacts:
+        if not isinstance(artifact, dict):
+            continue
+        if str(artifact.get("type", "")).strip() != artifact_type:
+            continue
+
+        path = artifact.get("path")
+        if isinstance(path, str) and path.strip():
+            values.append(path.strip())
+
+        value = artifact.get("value")
+        if isinstance(value, str) and value.strip():
+            values.append(value.strip())
+        elif isinstance(value, list):
+            for item in value:
+                if isinstance(item, str) and item.strip():
+                    values.append(item.strip())
+
+    return values
+
+
+def _infer_acceptance_status(acceptance_criteria: list[str]) -> str:
+    if not acceptance_criteria:
+        return "unknown"
+
+    normalized = [item.lower() for item in acceptance_criteria]
+    has_fail = any(
+        any(marker in item for marker in ["fail", "not met", "blocked"])
+        for item in normalized
+    )
+    has_pass = any("pass" in item for item in normalized)
+
+    if has_pass and not has_fail:
+        return "met"
+    if has_pass and has_fail:
+        return "partial"
+    if has_fail:
+        return "not_met"
+    return "unknown"
+
+
+def build_task_compression_summary(task: dict[str, Any], contract: dict[str, Any]) -> str:
+    task_id = str(task.get("id") or contract.get("task_id") or "")
+    goal = str(task.get("title", "")).strip() or "No task title provided."
+
+    artifacts = _artifact_paths_from_contract(contract)
+    artifact_text = ", ".join(artifacts[:4]) if artifacts else "none reported"
+
+    validation_items = _artifact_values_for_type(contract, "commands")
+    if not validation_items:
+        validation_items = _artifact_values_for_type(contract, "validation")
+    validation_text = ", ".join(validation_items[:3]) if validation_items else "not reported"
+
+    raw_acceptance = contract.get("acceptance_criteria")
+    acceptance_criteria = [item for item in raw_acceptance if isinstance(item, str)] if isinstance(raw_acceptance, list) else []
+    acceptance_status = _infer_acceptance_status(acceptance_criteria)
+    acceptance_text = f"{acceptance_status}; criteria_count={len(acceptance_criteria)}"
+
+    raw_risks = contract.get("risks")
+    risks = [item for item in raw_risks if isinstance(item, str) and item.strip()] if isinstance(raw_risks, list) else []
+    risks_text = ", ".join(risks[:3]) if risks else "none reported"
+
+    raw_open_questions = contract.get("open_questions")
+    open_questions = [item for item in raw_open_questions if isinstance(item, str) and item.strip()] if isinstance(raw_open_questions, list) else []
+    open_questions_text = ", ".join(open_questions[:2]) if open_questions else "none reported"
+
+    raw_handoff_to = contract.get("handoff_to")
+    handoff_to = [item for item in raw_handoff_to if isinstance(item, str) and item.strip()] if isinstance(raw_handoff_to, list) else []
+    next_owner = handoff_to[0] if handoff_to else ""
+
+    next_actions: list[str] = []
+    raw_next_items = contract.get("next_role_action_items")
+    if isinstance(raw_next_items, list):
+        for entry in raw_next_items:
+            if not isinstance(entry, dict):
+                continue
+            role_value = entry.get("role")
+            items_value = entry.get("items")
+            if next_owner and role_value != next_owner:
+                continue
+            if isinstance(items_value, list):
+                for item in items_value:
+                    if isinstance(item, str) and item.strip():
+                        next_actions.append(item.strip())
+    if not next_actions:
+        next_actions.append("Follow stage template and acceptance criteria.")
+
+    next_text = f"{next_owner or 'unassigned'}: " + "; ".join(next_actions[:2])
+
+    lines = [
+        "### IMMUTABLE SUMMARY (5-10 lines)",
+        f"1) Task: {task_id} - {goal}",
+        f"2) Changes/Artifacts: {artifact_text}",
+        f"3) Validation: {validation_text}",
+        f"4) Acceptance: {acceptance_text}",
+        f"5) Risks: {risks_text}",
+        f"6) Open questions: {open_questions_text}",
+        f"7) Next: {next_text}",
+    ]
+
+    footer = {
+        "task_id": task_id,
+        "type": "compression_summary",
+        "artifacts": artifacts,
+        "validation": validation_items,
+        "acceptance_status": acceptance_status,
+        "risks": risks[:3],
+        "open_questions": open_questions[:3],
+        "next_owner": next_owner,
+        "next_actions": next_actions,
+    }
+    lines.extend(
+        [
+            "",
+            "```json",
+            json.dumps(footer, ensure_ascii=True, indent=2),
+            "```",
+        ]
+    )
+    return "\n".join(lines).strip() + "\n"
 
 
 def validate_output_contract(role: str, task: dict[str, Any], contract: dict[str, Any] | None) -> list[str]:
@@ -900,6 +1041,19 @@ def build_handoff_context(state: dict[str, Any], task: dict[str, Any]) -> str:
         if not dep_task:
             continue
 
+        dep_metadata = dep_task.get("metadata") or {}
+        compression_path = dep_metadata.get("compression_path")
+        if isinstance(compression_path, str) and compression_path.strip():
+            abs_compression_path = ROOT / compression_path
+            if abs_compression_path.exists():
+                compression_content = abs_compression_path.read_text(encoding="utf-8").strip()
+                if compression_content:
+                    chunks.append(
+                        f"Handoff summary from {dep_id} ({dep_task.get('role')}):\n"
+                        f"{compression_content[:4000]}"
+                    )
+                    continue
+
         output_path = dep_task.get("output_path")
         if not output_path:
             continue
@@ -996,6 +1150,13 @@ def run_codex_task(
 def write_task_output(task_id: str, content: str) -> str:
     ensure_dirs()
     out_file = TASK_OUTPUT_DIR / f"{task_id}.md"
+    out_file.write_text(content.strip() + "\n", encoding="utf-8")
+    return str(out_file.relative_to(ROOT))
+
+
+def write_task_compression(task_id: str, content: str) -> str:
+    ensure_dirs()
+    out_file = TASK_OUTPUT_DIR / f"{task_id}.compression.md"
     out_file.write_text(content.strip() + "\n", encoding="utf-8")
     return str(out_file.relative_to(ROOT))
 
@@ -1367,7 +1528,20 @@ def _dispatch_task_object(state: dict[str, Any], task: dict[str, Any]) -> int:
         output_path = write_task_output(task["id"], content)
         task["output_path"] = output_path
         task["finished_at"] = utc_now()
-        task.setdefault("metadata", {})["output_contract"] = contract
+        metadata = task.setdefault("metadata", {})
+        metadata["output_contract"] = contract
+        if contract:
+            compression_content = build_task_compression_summary(task, contract)
+            compression_path = write_task_compression(task["id"], compression_content)
+            metadata["compression_path"] = compression_path
+            append_event(
+                "task_compression_written",
+                {
+                    "task_id": task["id"],
+                    "role": role,
+                    "compression_path": compression_path,
+                },
+            )
         role_state["tasks_completed"] = int(role_state.get("tasks_completed", 0)) + 1
         append_event(
             "task_completed",
@@ -1383,6 +1557,8 @@ def _dispatch_task_object(state: dict[str, Any], task: dict[str, Any]) -> int:
         )
         print(f"Completed {task['id']} ({role})")
         print(f"Output: {output_path}")
+        if contract:
+            print(f"Compression: {metadata.get('compression_path')}")
     else:
         task["status"] = "failed"
         if contract_errors:

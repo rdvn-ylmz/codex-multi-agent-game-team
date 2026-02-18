@@ -148,9 +148,17 @@ then:
   "task_id": "",
   "owner": "orchestrator",
   "status": "dispatched",
-  "next_owner": "",
-  "required_artifacts": [],
-  "acceptance_criteria": [],
-  "reasoning_summary": ""
+  "acceptance_criteria": ["Next stage criteria are explicitly defined"],
+  "artifacts": [
+    { "type": "required_artifacts", "value": ["docs/...", "src/..."] }
+  ],
+  "handoff_to": ["next_role"],
+  "risks": [],
+  "next_role_action_items": [
+    { "role": "next_role", "items": ["Implement only required artifacts and satisfy acceptance criteria"] }
+  ],
+  "next_owner": "next_role",
+  "required_artifacts": ["docs/...", "src/..."],
+  "reasoning_summary": "Routing decision and constraints summary."
 }
 ```

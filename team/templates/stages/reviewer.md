@@ -77,7 +77,15 @@ If CHANGES_REQUESTED -> Coder:
   "task_id": "",
   "owner": "reviewer",
   "status": "approved_or_changes_requested",
-  "handoff_to": [],
+  "acceptance_criteria": ["Each criterion is marked PASS or FAIL with notes"],
+  "artifacts": [
+    { "type": "review_notes", "value": ["findings with file:line references"] }
+  ],
+  "handoff_to": ["qa_or_coder"],
+  "risks": [],
+  "next_role_action_items": [
+    { "role": "qa_or_coder", "items": ["Execute the specific action items listed in the handoff"] }
+  ],
   "issues": [
     { "severity": "critical|medium|minor", "file": "", "line": "", "message": "", "suggested_fix": "" }
   ]

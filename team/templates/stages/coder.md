@@ -78,11 +78,15 @@ If key info is missing, ask up to 5 concise questions first.
   "task_id": "",
   "owner": "coder",
   "status": "needs_review",
+  "acceptance_criteria": ["Acceptance criteria checked with PASS/FAIL notes"],
   "artifacts": [
     { "type": "files_changed", "value": [] },
     { "type": "commands", "value": [] }
   ],
   "handoff_to": ["reviewer"],
-  "risks": []
+  "risks": [],
+  "next_role_action_items": [
+    { "role": "reviewer", "items": ["Review changed files and validate acceptance criteria"] }
+  ]
 }
 ```

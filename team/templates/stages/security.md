@@ -90,7 +90,15 @@ If CHANGES_REQUESTED -> Coder:
   "task_id": "",
   "owner": "security",
   "status": "approved_or_changes_requested",
-  "handoff_to": [],
+  "acceptance_criteria": ["Security checks are explicitly marked PASS/FAIL"],
+  "artifacts": [
+    { "type": "security_notes", "value": ["threat delta and mitigation notes"] }
+  ],
+  "handoff_to": ["sre_or_devops_or_coder"],
+  "risks": [],
+  "next_role_action_items": [
+    { "role": "sre_or_devops_or_coder", "items": ["Apply mitigations or monitor listed security risks"] }
+  ],
   "findings": [
     { "severity": "critical|high|medium|low", "message": "", "impact": "", "recommendation": "", "files": [] }
   ]

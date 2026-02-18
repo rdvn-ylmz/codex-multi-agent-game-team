@@ -71,11 +71,16 @@ Provide file contents in your response (ready to paste).
   "task_id": "",
   "owner": "narrative",
   "status": "done",
+  "acceptance_criteria": ["Narrative frame, mission text, and UI copy are provided"],
   "artifacts": [
     { "type": "doc", "path": "docs/narrative.md" },
     { "type": "doc", "path": "assets/text/ui_copy.md" }
   ],
   "handoff_to": ["player_experience", "coder"],
-  "risks": []
+  "risks": [],
+  "next_role_action_items": [
+    { "role": "player_experience", "items": ["Map narrative copy into FTUE and UX flows"] },
+    { "role": "coder", "items": ["Integrate narrative and UI copy into implementation"] }
+  ]
 }
 ```

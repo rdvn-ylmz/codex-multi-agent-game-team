@@ -74,11 +74,16 @@ Provide file contents in your response (ready to paste).
   "task_id": "",
   "owner": "player_experience",
   "status": "done",
+  "acceptance_criteria": ["UX flows, FTUE steps, and QA scenarios are defined"],
   "artifacts": [
     { "type": "doc", "path": "docs/ux_flow.md" },
     { "type": "doc", "path": "docs/ftue.md" }
   ],
   "handoff_to": ["coder", "qa"],
-  "risks": []
+  "risks": [],
+  "next_role_action_items": [
+    { "role": "coder", "items": ["Implement FTUE and UX flow order with minimal scope"] },
+    { "role": "qa", "items": ["Validate FTUE and listed UX test scenarios"] }
+  ]
 }
 ```

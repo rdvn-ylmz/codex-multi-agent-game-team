@@ -81,11 +81,16 @@ If missing critical info, ask up to 5 concise questions.
   "task_id": "",
   "owner": "qa",
   "status": "passed_or_failed",
+  "acceptance_criteria": ["Each criterion includes PASS/FAIL evidence"],
   "artifacts": [
     { "type": "commands", "value": [] },
     { "type": "evidence", "value": [] }
   ],
-  "handoff_to": [],
+  "handoff_to": ["sre_or_devops_or_coder"],
+  "risks": [],
+  "next_role_action_items": [
+    { "role": "sre_or_devops_or_coder", "items": ["Use QA evidence and defect list for next action"] }
+  ],
   "defects": []
 }
 ```

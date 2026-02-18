@@ -78,11 +78,16 @@ Provide file contents in your response (ready to paste).
   "task_id": "",
   "owner": "game_design",
   "status": "done",
+  "acceptance_criteria": ["Core loop, systems, and balance knobs are documented"],
   "artifacts": [
     { "type": "doc", "path": "docs/game_design.md" },
     { "type": "doc", "path": "docs/balance_knobs.md" }
   ],
   "handoff_to": ["narrative", "player_experience"],
-  "risks": []
+  "risks": [],
+  "next_role_action_items": [
+    { "role": "narrative", "items": ["Create mission and UI text aligned with design systems"] },
+    { "role": "player_experience", "items": ["Define FTUE and UX flows for the designed loop"] }
+  ]
 }
 ```

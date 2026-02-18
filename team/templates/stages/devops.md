@@ -80,7 +80,15 @@ If missing critical info, ask up to 5 concise questions.
   "task_id": "",
   "owner": "devops",
   "status": "approved_or_changes_requested",
-  "handoff_to": [],
+  "acceptance_criteria": ["Merge/release gates and rollback plan are complete"],
+  "artifacts": [
+    { "type": "cicd_notes", "value": ["pipeline changes, release checklist, rollback plan"] }
+  ],
+  "handoff_to": ["orchestrator"],
+  "risks": [],
+  "next_role_action_items": [
+    { "role": "orchestrator", "items": ["Finalize completion only if all release blockers are resolved"] }
+  ],
   "rollback_plan": {
     "triggers": [],
     "steps": []

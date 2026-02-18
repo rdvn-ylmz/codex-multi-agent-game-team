@@ -71,8 +71,15 @@ If missing critical info, ask up to 5 concise questions.
   "task_id": "",
   "owner": "sre",
   "status": "approved_or_changes_requested",
+  "acceptance_criteria": ["Reliability, observability, and rollback criteria are covered"],
+  "artifacts": [
+    { "type": "sre_notes", "value": ["failure modes and observability baseline"] }
+  ],
   "handoff_to": ["devops"],
   "risks": [],
+  "next_role_action_items": [
+    { "role": "devops", "items": ["Map SRE risks and runbook updates into release plan"] }
+  ],
   "observability": {
     "logs": [],
     "metrics": [],
