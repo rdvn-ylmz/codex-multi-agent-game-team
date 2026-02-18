@@ -3,6 +3,17 @@ workflow:
   mode: codex_only
   orchestration: central_orchestrator
   max_active_sessions: 2
+  default_pipeline:
+    - concept
+    - game_design
+    - narrative
+    - player_experience
+    - coder
+    - reviewer
+    - qa
+    - security
+    - sre
+    - devops
   task_state_machine:
     - backlog
     - queued

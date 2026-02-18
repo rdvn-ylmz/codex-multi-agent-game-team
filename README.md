@@ -23,9 +23,13 @@ Then use chat commands:
 - `/status`
 - `/agents`
 - `/queue`
+- `/pipelines`
 - `/task <role> | <title> | <description>`
 - `/run <role> | <title> | <description>`
+- `/pipeline <title> | <brief>`
+- `/run-pipeline <title> | <brief>`
 - `/dispatch [TASK-ID]`
+- `/drain [max_tasks]`
 - `/stop`
 - `/exit`
 
@@ -38,6 +42,22 @@ Then use chat commands:
 ```
 
 State is persisted under `team/state/` using JSON + JSONL event log for restart recovery.
+
+## Pipeline workflow
+
+Create a role chain pipeline from CLI:
+
+```bash
+python3 team/orchestrator.py pipeline "Browser Game MVP" "Build an initial playable loop and release checklist."
+python3 team/orchestrator.py pipelines
+python3 team/orchestrator.py run-pipeline PIPE-0001
+```
+
+Drain queue automatically:
+
+```bash
+python3 team/orchestrator.py drain --max-tasks 5
+```
 
 ## GitHub bootstrap
 
