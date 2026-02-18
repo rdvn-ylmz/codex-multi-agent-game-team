@@ -1,0 +1,18 @@
+{
+  "use_role_workspaces_if_present": true,
+  "roles": {
+    "concept": "team/workspaces/concept",
+    "game_design": "team/workspaces/game_design",
+    "narrative": "team/workspaces/narrative",
+    "player_experience": "team/workspaces/player_experience",
+    "coder": "team/workspaces/coder",
+    "reviewer": "team/workspaces/reviewer",
+    "qa": "team/workspaces/qa",
+    "security": "team/workspaces/security",
+    "sre": "team/workspaces/sre",
+    "devops": "team/workspaces/devops",
+    "council_red": "team/workspaces/council_red",
+    "council_blue": "team/workspaces/council_blue",
+    "council_green": "team/workspaces/council_green"
+  }
+}

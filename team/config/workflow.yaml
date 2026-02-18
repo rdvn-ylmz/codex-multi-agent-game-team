@@ -14,6 +14,11 @@ workflow:
     - security
     - sre
     - devops
+  default_debate:
+    - council_red
+    - council_blue
+    - council_green
+  debate_moderator: orchestrator
   task_state_machine:
     - backlog
     - queued

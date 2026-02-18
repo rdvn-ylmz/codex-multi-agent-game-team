@@ -5,6 +5,7 @@ __pycache__/
 .data/
 .state/
 .nvimlog
+team/workspaces/
 team/state/runtime_state.json
 team/state/runtime_state.last.json
 team/state/events.jsonl

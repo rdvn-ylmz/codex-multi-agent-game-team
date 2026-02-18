@@ -18,6 +18,7 @@ CONFIG_DIR = TEAM_DIR / "config"
 STATE_DIR = TEAM_DIR / "state"
 TASK_OUTPUT_DIR = STATE_DIR / "task_outputs"
 STAGE_TEMPLATE_DIR = TEAM_DIR / "templates" / "stages"
+WORKSPACE_CONFIG_FILE = CONFIG_DIR / "workspaces.json"
 
 STATE_FILE = Path(os.getenv("TEAM_STATE_PATH", STATE_DIR / "runtime_state.json"))
 EVENTS_FILE = Path(os.getenv("TEAM_EVENTS_PATH", STATE_DIR / "events.jsonl"))
@@ -34,6 +35,9 @@ DEFAULT_ROLE_IDS = [
     "security",
     "sre",
     "devops",
+    "council_red",
+    "council_blue",
+    "council_green",
 ]
 
 DEFAULT_PIPELINE_ROLES = [
@@ -48,6 +52,14 @@ DEFAULT_PIPELINE_ROLES = [
     "sre",
     "devops",
 ]
+
+DEFAULT_DEBATE_ROLES = [
+    "council_red",
+    "council_blue",
+    "council_green",
+]
+
+DEFAULT_DEBATE_MODERATOR = "orchestrator"
 
 
 @dataclass
@@ -122,11 +134,63 @@ def read_default_pipeline() -> list[str]:
     return roles or DEFAULT_PIPELINE_ROLES
 
 
+def read_default_debate_roles() -> list[str]:
+    workflow_file = CONFIG_DIR / "workflow.yaml"
+    roles = _parse_yaml_id_list(workflow_file, "default_debate")
+    return roles or DEFAULT_DEBATE_ROLES
+
+
+def read_default_debate_moderator() -> str:
+    workflow_file = CONFIG_DIR / "workflow.yaml"
+    if not workflow_file.exists():
+        return DEFAULT_DEBATE_MODERATOR
+
+    pattern = re.compile(r"^\s*debate_moderator\s*:\s*([a-zA-Z0-9_-]+)\s*$")
+    for line in workflow_file.read_text(encoding="utf-8").splitlines():
+        match = pattern.match(line)
+        if match:
+            return match.group(1)
+    return DEFAULT_DEBATE_MODERATOR
+
+
 def load_stage_template(role: str) -> str:
     template_file = STAGE_TEMPLATE_DIR / f"{role}.md"
     if template_file.exists():
         return template_file.read_text(encoding="utf-8").strip()
     return ""
+
+
+def read_workspace_config() -> dict[str, Any]:
+    if WORKSPACE_CONFIG_FILE.exists():
+        with WORKSPACE_CONFIG_FILE.open("r", encoding="utf-8") as handle:
+            data = json.load(handle)
+            if isinstance(data, dict):
+                return data
+
+    return {
+        "use_role_workspaces_if_present": True,
+        "roles": {},
+    }
+
+
+def resolve_role_workdir(role: str) -> Path:
+    config = read_workspace_config()
+    use_role_workspaces = bool(config.get("use_role_workspaces_if_present", True))
+    if not use_role_workspaces:
+        return ROOT
+
+    roles_map = config.get("roles", {})
+    if not isinstance(roles_map, dict):
+        return ROOT
+
+    role_path = roles_map.get(role)
+    if not role_path:
+        return ROOT
+
+    workdir = (ROOT / str(role_path)).resolve()
+    if workdir.exists() and workdir.is_dir():
+        return workdir
+    return ROOT
 
 
 def base_config() -> dict[str, Any]:
@@ -144,7 +208,7 @@ def new_state() -> dict[str, Any]:
     now = utc_now()
     role_ids = read_role_ids()
     return {
-        "version": 2,
+        "version": 3,
         "created_at": now,
         "updated_at": now,
         "started_at": None,
@@ -162,6 +226,7 @@ def new_state() -> dict[str, Any]:
         },
         "tasks": [],
         "pipelines": [],
+        "debates": [],
     }
 
 
@@ -169,11 +234,15 @@ def ensure_state_schema(state: dict[str, Any]) -> bool:
     changed = False
 
     if "version" not in state:
-        state["version"] = 2
+        state["version"] = 3
         changed = True
 
     if "pipelines" not in state:
         state["pipelines"] = []
+        changed = True
+
+    if "debates" not in state:
+        state["debates"] = []
         changed = True
 
     if "config" not in state:
@@ -276,6 +345,15 @@ def next_pipeline_id(state: dict[str, Any]) -> str:
 
     last = max(int(pipe["id"].split("-")[1]) for pipe in pipelines)
     return f"PIPE-{last + 1:04d}"
+
+
+def next_debate_id(state: dict[str, Any]) -> str:
+    debates = state.get("debates", [])
+    if not debates:
+        return "DEBATE-0001"
+
+    last = max(int(debate["id"].split("-")[1]) for debate in debates)
+    return f"DEBATE-{last + 1:04d}"
 
 
 def ensure_role(state: dict[str, Any], role: str) -> None:
@@ -393,6 +471,87 @@ def create_pipeline(
     return pipeline
 
 
+def create_debate(
+    state: dict[str, Any],
+    title: str,
+    topic: str,
+    roles: list[str],
+    moderator: str,
+) -> dict[str, Any]:
+    debate_id = next_debate_id(state)
+    now = utc_now()
+
+    participant_task_ids: list[str] = []
+    for role in roles:
+        task = enqueue_task(
+            state,
+            role,
+            f"[{debate_id}] {title} :: {role}",
+            (
+                f"Debate ID: {debate_id}\n"
+                f"Role: {role}\n"
+                f"Topic:\n{topic}\n\n"
+                "Debate instructions:\n"
+                "- Argue one distinct approach with concrete tradeoffs.\n"
+                "- Challenge assumptions and mention risks.\n"
+                "- Give actionable recommendations for the moderator.\n"
+            ),
+            metadata={
+                "debate_id": debate_id,
+                "debate_stage": "position",
+                "depends_on_task_ids": [],
+            },
+        )
+        participant_task_ids.append(task["id"])
+
+    moderator_task = enqueue_task(
+        state,
+        moderator,
+        f"[{debate_id}] {title} :: moderator",
+        (
+            f"Debate ID: {debate_id}\n"
+            f"Moderator: {moderator}\n"
+            f"Topic:\n{topic}\n\n"
+            "Moderator instructions:\n"
+            "- Read all participant outputs.\n"
+            "- Summarize agreements and disagreements.\n"
+            "- Produce final recommendation with rationale and next tasks.\n"
+        ),
+        metadata={
+            "debate_id": debate_id,
+            "debate_stage": "moderation",
+            "depends_on_task_ids": participant_task_ids.copy(),
+        },
+    )
+
+    debate = {
+        "id": debate_id,
+        "title": title.strip(),
+        "topic": topic.strip(),
+        "roles": roles,
+        "moderator": moderator,
+        "participant_task_ids": participant_task_ids,
+        "moderator_task_id": moderator_task["id"],
+        "task_ids": participant_task_ids + [moderator_task["id"]],
+        "status": "queued",
+        "created_at": now,
+        "updated_at": now,
+        "last_error": None,
+    }
+    state.setdefault("debates", []).append(debate)
+    append_event(
+        "debate_created",
+        {
+            "debate_id": debate_id,
+            "title": title,
+            "roles": roles,
+            "moderator": moderator,
+            "task_ids": debate["task_ids"],
+        },
+    )
+    return debate
+
+
 def get_task(state: dict[str, Any], task_id: str) -> dict[str, Any] | None:
     for task in state["tasks"]:
         if task["id"] == task_id:
@@ -404,6 +563,13 @@ def get_pipeline(state: dict[str, Any], pipeline_id: str) -> dict[str, Any] | No
     for pipeline in state.get("pipelines", []):
         if pipeline["id"] == pipeline_id:
             return pipeline
+    return None
+
+
+def get_debate(state: dict[str, Any], debate_id: str) -> dict[str, Any] | None:
+    for debate in state.get("debates", []):
+        if debate["id"] == debate_id:
+            return debate
     return None
 
 
@@ -500,6 +666,7 @@ def run_codex_task(
     task: dict[str, Any],
     session_id: str | None,
     handoff_context: str,
+    workdir: Path,
 ) -> CodexResult:
     role_prompt = load_role_prompt(role)
     prompt = (
@@ -507,6 +674,7 @@ def run_codex_task(
         f"Task ID: {task['id']}\n"
         f"Title: {task['title']}\n"
         f"Description:\n{task['description']}\n\n"
+        f"Work directory: {workdir}\n"
         "Work in the current repository.\n"
         "Return a concise execution report with:\n"
         "1) Summary\n2) Files changed\n3) Risks and next handoff\n"
@@ -520,7 +688,7 @@ def run_codex_task(
         prompt = role_prompt + "\n\n" + prompt
 
     cmd = codex_command(prompt, session_id)
-    process = subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT)
+    process = subprocess.run(cmd, capture_output=True, text=True, cwd=workdir)
 
     out_lines = process.stdout.splitlines()
     messages: list[str] = []
@@ -554,6 +722,23 @@ def write_task_output(task_id: str, content: str) -> str:
     out_file = TASK_OUTPUT_DIR / f"{task_id}.md"
     out_file.write_text(content.strip() + "\n", encoding="utf-8")
     return str(out_file.relative_to(ROOT))
+
+
+def recover_inflight_tasks(state: dict[str, Any], reason: str) -> int:
+    recovered = 0
+    for task in state.get("tasks", []):
+        if task.get("status") == "running":
+            task["status"] = "queued"
+            task["updated_at"] = utc_now()
+            task["started_at"] = None
+            task["finished_at"] = None
+            task["error"] = f"Recovered inflight task: {reason}"
+            recovered += 1
+            append_event(
+                "task_requeued_from_recovery",
+                {"task_id": task.get("id"), "reason": reason},
+            )
+    return recovered
 
 
 def recompute_pipeline_status(state: dict[str, Any], pipeline_id: str) -> str | None:
@@ -602,6 +787,52 @@ def refresh_all_pipelines(state: dict[str, Any]) -> None:
         recompute_pipeline_status(state, pipeline["id"])
 
 
+def recompute_debate_status(state: dict[str, Any], debate_id: str) -> str | None:
+    debate = get_debate(state, debate_id)
+    if not debate:
+        return None
+
+    task_ids = debate.get("task_ids", [])
+    statuses: list[str] = []
+    for task_id in task_ids:
+        task = get_task(state, task_id)
+        statuses.append(task.get("status") if task else "missing")
+
+    if any(status == "failed" for status in statuses):
+        next_status = "failed"
+    elif statuses and all(status == "done" for status in statuses):
+        next_status = "done"
+    elif any(status == "running" for status in statuses):
+        next_status = "running"
+    elif any(status == "done" for status in statuses):
+        next_status = "in_progress"
+    elif any(status == "queued" for status in statuses):
+        next_status = "queued"
+    else:
+        next_status = "queued"
+
+    previous = debate.get("status")
+    debate["status"] = next_status
+    debate["updated_at"] = utc_now()
+
+    if previous != next_status:
+        append_event(
+            "debate_status_changed",
+            {
+                "debate_id": debate_id,
+                "from": previous,
+                "to": next_status,
+            },
+        )
+
+    return next_status
+
+
+def refresh_all_debates(state: dict[str, Any]) -> None:
+    for debate in state.get("debates", []):
+        recompute_debate_status(state, debate["id"])
+
+
 def start_team(args: argparse.Namespace) -> int:
     state = load_state()
 
@@ -623,8 +854,15 @@ def start_team(args: argparse.Namespace) -> int:
 
     for role in read_role_ids():
         ensure_role(state, role)
+    for role_data in state["roles"].values():
+        role_data["state"] = "idle"
+
+    recovered = recover_inflight_tasks(state, "team start")
+    if recovered:
+        append_event("recovery_applied", {"count": recovered, "reason": "team start"})
 
     refresh_all_pipelines(state)
+    refresh_all_debates(state)
     save_state(state)
     append_event("team_started", {"profile": state["config"].get("profile")})
 
@@ -636,13 +874,17 @@ def start_team(args: argparse.Namespace) -> int:
 
 def stop_team(_args: argparse.Namespace) -> int:
     state = load_state()
+    recovered = recover_inflight_tasks(state, "team stop")
     state["status"] = "stopped"
     state["stopped_at"] = utc_now()
     for role_data in state["roles"].values():
         role_data["state"] = "idle"
     refresh_all_pipelines(state)
+    refresh_all_debates(state)
     save_state(state)
     append_event("team_stopped", {"stopped_at": state["stopped_at"]})
+    if recovered:
+        append_event("recovery_applied", {"count": recovered, "reason": "team stop"})
     print("Team status: stopped")
     return 0
 
@@ -659,7 +901,13 @@ def resume_team(args: argparse.Namespace) -> int:
 
     state["status"] = "running"
     state["stopped_at"] = None
+    for role_data in state["roles"].values():
+        role_data["state"] = "idle"
+    recovered = recover_inflight_tasks(state, "team resume")
+    if recovered:
+        append_event("recovery_applied", {"count": recovered, "reason": "team resume"})
     refresh_all_pipelines(state)
+    refresh_all_debates(state)
     save_state(state)
     append_event("team_resumed", {})
     print("Team status: running (resumed)")
@@ -669,6 +917,7 @@ def resume_team(args: argparse.Namespace) -> int:
 def status_team(args: argparse.Namespace) -> int:
     state = load_state()
     refresh_all_pipelines(state)
+    refresh_all_debates(state)
     save_state(state)
 
     queued = sum(1 for task in state["tasks"] if task["status"] == "queued")
@@ -681,6 +930,13 @@ def status_team(args: argparse.Namespace) -> int:
     done_pipes = sum(1 for pipe in state["pipelines"] if pipe.get("status") == "done")
     failed_pipes = sum(1 for pipe in state["pipelines"] if pipe.get("status") == "failed")
 
+    queued_debates = sum(1 for debate in state["debates"] if debate.get("status") == "queued")
+    running_debates = sum(
+        1 for debate in state["debates"] if debate.get("status") in {"running", "in_progress"}
+    )
+    done_debates = sum(1 for debate in state["debates"] if debate.get("status") == "done")
+    failed_debates = sum(1 for debate in state["debates"] if debate.get("status") == "failed")
+
     if args.json:
         print(json.dumps(state, indent=2, ensure_ascii=True))
         return 0
@@ -691,6 +947,10 @@ def status_team(args: argparse.Namespace) -> int:
     print(f"Stopped at: {state.get('stopped_at')}")
     print(f"Tasks: queued={queued} running={running} done={done} failed={failed}")
     print(f"Pipelines: queued={queued_pipes} running={running_pipes} done={done_pipes} failed={failed_pipes}")
+    print(
+        "Debates: "
+        f"queued={queued_debates} running={running_debates} done={done_debates} failed={failed_debates}"
+    )
     print("Roles:")
     for role, info in sorted(state["roles"].items()):
         sid = info.get("session_id")
@@ -729,9 +989,29 @@ def enqueue_pipeline(args: argparse.Namespace) -> int:
     return 0
 
 
+def enqueue_debate(args: argparse.Namespace) -> int:
+    state = load_state()
+    roles = [part.strip() for part in (args.roles or "").split(",") if part.strip()]
+    if not roles:
+        roles = read_default_debate_roles()
+
+    moderator = (args.moderator or read_default_debate_moderator()).strip()
+    debate = create_debate(state, args.title, args.topic, roles, moderator)
+    refresh_all_debates(state)
+    save_state(state)
+
+    print(f"Created {debate['id']} with {len(debate['task_ids'])} task(s)")
+    for task_id in debate["task_ids"]:
+        task = get_task(state, task_id)
+        role = task["role"] if task else "unknown"
+        print(f"- {task_id} [{role}]")
+    return 0
+
+
 def _dispatch_task_object(state: dict[str, Any], task: dict[str, Any]) -> int:
     role = task["role"]
     ensure_role(state, role)
+    workdir = resolve_role_workdir(role)
 
     task["status"] = "running"
     task["started_at"] = utc_now()
@@ -740,7 +1020,9 @@ def _dispatch_task_object(state: dict[str, Any], task: dict[str, Any]) -> int:
     role_state = state["roles"][role]
     role_state["state"] = "busy"
 
-    pipeline_id = (task.get("metadata") or {}).get("pipeline_id")
+    metadata = task.get("metadata") or {}
+    pipeline_id = metadata.get("pipeline_id")
+    debate_id = metadata.get("debate_id")
     save_state(state)
     append_event(
         "task_started",
@@ -748,11 +1030,13 @@ def _dispatch_task_object(state: dict[str, Any], task: dict[str, Any]) -> int:
             "task_id": task["id"],
             "role": role,
             "pipeline_id": pipeline_id,
+            "debate_id": debate_id,
+            "workdir": str(workdir),
         },
     )
 
     handoff_context = build_handoff_context(state, task)
-    result = run_codex_task(role, task, role_state.get("session_id"), handoff_context)
+    result = run_codex_task(role, task, role_state.get("session_id"), handoff_context, workdir)
 
     if result.session_id:
         role_state["session_id"] = result.session_id
@@ -771,6 +1055,8 @@ def _dispatch_task_object(state: dict[str, Any], task: dict[str, Any]) -> int:
                 "task_id": task["id"],
                 "role": role,
                 "pipeline_id": pipeline_id,
+                "debate_id": debate_id,
+                "workdir": str(workdir),
                 "output_path": output_path,
             },
         )
@@ -786,6 +1072,8 @@ def _dispatch_task_object(state: dict[str, Any], task: dict[str, Any]) -> int:
                 "task_id": task["id"],
                 "role": role,
                 "pipeline_id": pipeline_id,
+                "debate_id": debate_id,
+                "workdir": str(workdir),
                 "error": task["error"],
             },
         )
@@ -802,6 +1090,12 @@ def _dispatch_task_object(state: dict[str, Any], task: dict[str, Any]) -> int:
         if pipeline and task["status"] == "failed":
             pipeline["last_error"] = task["error"]
         recompute_pipeline_status(state, str(pipeline_id))
+
+    if debate_id:
+        debate = get_debate(state, str(debate_id))
+        if debate and task["status"] == "failed":
+            debate["last_error"] = task["error"]
+        recompute_debate_status(state, str(debate_id))
 
     save_state(state)
     return 0 if result.return_code == 0 else result.return_code
@@ -899,6 +1193,61 @@ def run_pipeline(args: argparse.Namespace) -> int:
     return run_pipeline_by_id(args.pipeline_id, stop_on_failure=not args.continue_on_failure)
 
 
+def run_debate_by_id(debate_id: str, stop_on_failure: bool) -> int:
+    state = load_state()
+    if state["status"] != "running":
+        print("Team is not running. Use start/resume first.", file=sys.stderr)
+        return 1
+
+    debate = get_debate(state, debate_id)
+    if not debate:
+        print(f"Debate not found: {debate_id}", file=sys.stderr)
+        return 1
+
+    append_event("debate_run_started", {"debate_id": debate_id})
+
+    for task_id in debate.get("task_ids", []):
+        state = load_state()
+        task = get_task(state, task_id)
+        if not task:
+            print(f"Missing task in debate: {task_id}", file=sys.stderr)
+            if stop_on_failure:
+                return 1
+            continue
+
+        if task["status"] == "done":
+            continue
+
+        if task["status"] == "failed":
+            print(f"Task already failed: {task_id}", file=sys.stderr)
+            if stop_on_failure:
+                append_event(
+                    "debate_run_stopped",
+                    {"debate_id": debate_id, "reason": f"failed task {task_id}"},
+                )
+                return 1
+            continue
+
+        code = dispatch(argparse.Namespace(task_id=task_id))
+        if code != 0 and stop_on_failure:
+            append_event(
+                "debate_run_stopped",
+                {"debate_id": debate_id, "reason": f"dispatch failure on {task_id}"},
+            )
+            return code
+
+    state = load_state()
+    final_status = recompute_debate_status(state, debate_id)
+    save_state(state)
+    append_event("debate_run_finished", {"debate_id": debate_id, "status": final_status})
+    print(f"Debate {debate_id} status: {final_status}")
+    return 0
+
+
+def run_debate(args: argparse.Namespace) -> int:
+    return run_debate_by_id(args.debate_id, stop_on_failure=not args.continue_on_failure)
+
+
 def drain_queue(args: argparse.Namespace) -> int:
     state = load_state()
     if state["status"] != "running":
@@ -945,11 +1294,30 @@ def pipelines_view(state: dict[str, Any]) -> None:
         print(f"- {pipeline['id']} [{pipeline.get('status')}] {pipeline.get('title')} ({task_count} tasks)")
 
 
+def debates_view(state: dict[str, Any]) -> None:
+    debates = state.get("debates", [])
+    if not debates:
+        print("No debates found.")
+        return
+
+    for debate in debates:
+        task_count = len(debate.get("task_ids", []))
+        print(f"- {debate['id']} [{debate.get('status')}] {debate.get('title')} ({task_count} tasks)")
+
+
 def pipelines_status(_args: argparse.Namespace) -> int:
     state = load_state()
     refresh_all_pipelines(state)
     save_state(state)
     pipelines_view(state)
+    return 0
+
+
+def debates_status(_args: argparse.Namespace) -> int:
+    state = load_state()
+    refresh_all_debates(state)
+    save_state(state)
+    debates_view(state)
     return 0
 
 
@@ -960,10 +1328,13 @@ def print_chat_help() -> None:
     print("/agents")
     print("/queue")
     print("/pipelines")
+    print("/debates")
     print("/task <role> | <title> | <description>")
     print("/run <role> | <title> | <description>")
     print("/pipeline <title> | <brief>")
     print("/run-pipeline <title> | <brief>")
+    print("/debate <title> | <topic>")
+    print("/run-debate <title> | <topic>")
     print("/dispatch [TASK-ID]")
     print("/drain [max_tasks]")
     print("/stop")
@@ -987,6 +1358,32 @@ def agents_view(state: dict[str, Any]) -> None:
         sid = info.get("session_id")
         short = sid[:8] + "..." if sid else "-"
         print(f"- {role}: state={info.get('state')} session={short}")
+
+
+def print_task_report(task_id: str, max_chars: int = 5000) -> None:
+    state = load_state()
+    task = get_task(state, task_id)
+    if not task:
+        print(f"Task output unavailable: {task_id}")
+        return
+
+    output_path = task.get("output_path")
+    if not output_path:
+        print(f"No output path for {task_id}.")
+        return
+
+    file_path = ROOT / output_path
+    if not file_path.exists():
+        print(f"Output file not found: {output_path}")
+        return
+
+    content = file_path.read_text(encoding="utf-8").strip()
+    if len(content) > max_chars:
+        content = content[:max_chars] + "\n\n[truncated]"
+
+    print(f"--- {task_id} report ({task.get('role')}) ---")
+    print(content)
+    print("--- end report ---")
 
 
 def chat(_args: argparse.Namespace) -> int:
@@ -1032,6 +1429,10 @@ def chat(_args: argparse.Namespace) -> int:
             pipelines_view(load_state())
             continue
 
+        if raw == "/debates":
+            debates_view(load_state())
+            continue
+
         if raw.startswith("/task ") or raw.startswith("/run "):
             run_now = raw.startswith("/run ")
             payload = raw.split(" ", 1)[1]
@@ -1069,6 +1470,32 @@ def chat(_args: argparse.Namespace) -> int:
                 run_pipeline_by_id(pipeline["id"], stop_on_failure=True)
             continue
 
+        if raw.startswith("/debate ") or raw.startswith("/run-debate "):
+            run_now = raw.startswith("/run-debate ")
+            payload = raw.split(" ", 1)[1]
+            parts = [part.strip() for part in payload.split("|", 1)]
+            if len(parts) != 2:
+                print("Format: /debate <title> | <topic>")
+                continue
+
+            title, topic = parts
+            state = load_state()
+            debate = create_debate(
+                state,
+                title,
+                topic,
+                read_default_debate_roles(),
+                read_default_debate_moderator(),
+            )
+            refresh_all_debates(state)
+            save_state(state)
+
+            print(f"Created {debate['id']} with {len(debate['task_ids'])} tasks")
+            if run_now:
+                run_debate_by_id(debate["id"], stop_on_failure=True)
+                print_task_report(debate["moderator_task_id"])
+            continue
+
         if raw.startswith("/dispatch"):
             parts = raw.split(" ", 1)
             task_id = parts[1].strip() if len(parts) == 2 else None
@@ -1099,7 +1526,11 @@ def chat(_args: argparse.Namespace) -> int:
             f"Respond to user input and produce actionable next tasks:\n{raw}",
         )
         save_state(state)
-        print(f"Message converted to {task['id']}. Use /dispatch {task['id']} to run.")
+        code = dispatch(argparse.Namespace(task_id=task["id"]))
+        if code == 0:
+            print_task_report(task["id"])
+        else:
+            print(f"Failed to process chat message task {task['id']}.")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1133,6 +1564,13 @@ def build_parser() -> argparse.ArgumentParser:
     pipeline.add_argument("--roles", help="Comma-separated role list")
     pipeline.set_defaults(func=enqueue_pipeline)
 
+    debate = sub.add_parser("debate", help="Create a multi-agent debate bundle")
+    debate.add_argument("title")
+    debate.add_argument("topic")
+    debate.add_argument("--roles", help="Comma-separated role list")
+    debate.add_argument("--moderator", help="Moderator role")
+    debate.set_defaults(func=enqueue_debate)
+
     run = sub.add_parser("dispatch", help="Dispatch one queued task")
     run.add_argument("task_id", nargs="?")
     run.set_defaults(func=dispatch)
@@ -1142,6 +1580,11 @@ def build_parser() -> argparse.ArgumentParser:
     run_pipe.add_argument("--continue-on-failure", action="store_true")
     run_pipe.set_defaults(func=run_pipeline)
 
+    run_debate_cmd = sub.add_parser("run-debate", help="Run tasks of one debate in order")
+    run_debate_cmd.add_argument("debate_id")
+    run_debate_cmd.add_argument("--continue-on-failure", action="store_true")
+    run_debate_cmd.set_defaults(func=run_debate)
+
     drain = sub.add_parser("drain", help="Drain all ready tasks from queue")
     drain.add_argument("--max-tasks", type=int)
     drain.add_argument("--continue-on-failure", action="store_true")
@@ -1149,6 +1592,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     pipes = sub.add_parser("pipelines", help="List pipelines")
     pipes.set_defaults(func=pipelines_status)
+
+    debates_cmd = sub.add_parser("debates", help="List debates")
+    debates_cmd.set_defaults(func=debates_status)
 
     chat_cmd = sub.add_parser("chat", help="Interactive terminal chat")
     chat_cmd.set_defaults(func=chat)

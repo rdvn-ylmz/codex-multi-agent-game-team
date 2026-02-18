@@ -10,16 +10,23 @@ This repository bootstraps a Codex-only multi-agent workflow that runs in a sing
 - `scripts/resume_team.sh`: resume after shutdown
 - `scripts/team_status.sh`: runtime status
 - `scripts/run_pipeline.sh`: one-command pipeline create + execute
+- `scripts/start_team_tmux.sh`: start tmux multi-pane cockpit
+- `scripts/stop_team_tmux.sh`: stop tmux cockpit + team
+- `scripts/setup_workspaces.sh`: create per-role git workspaces (worktree)
+- `scripts/workspaces_status.sh`: inspect role workspaces
 - `.github/workflows/quality-gates.yml`: CI quality gates
 - `scripts/lint.sh`, `scripts/test.sh`, `scripts/security_scan.sh`, `scripts/perf_budget.sh`
-- `team/config/*.yaml`: roles/workflow/gates/policy configs
+- `team/config/*.yaml`, `team/config/workspaces.json`: runtime configs
 - `team/templates/stages/*.md`: role-specific stage templates
+- `team/prompts/council_*.md`: 3-agent debate personas
 
 ## Quick start
 
 ```bash
 ./scripts/start_team.sh --profile low-spec
 ```
+
+The chat now auto-dispatches normal text messages and prints the report directly, so you can ask questions and receive responses in the same pane.
 
 Then use chat commands:
 
@@ -28,14 +35,37 @@ Then use chat commands:
 - `/agents`
 - `/queue`
 - `/pipelines`
+- `/debates`
 - `/task <role> | <title> | <description>`
 - `/run <role> | <title> | <description>`
 - `/pipeline <title> | <brief>`
 - `/run-pipeline <title> | <brief>`
+- `/debate <title> | <topic>`
+- `/run-debate <title> | <topic>`
 - `/dispatch [TASK-ID]`
 - `/drain [max_tasks]`
 - `/stop`
 - `/exit`
+
+## tmux cockpit (visible sessions)
+
+This gives you an on-screen multi-window environment:
+
+1. `control`: interactive chat + status + global events
+2. `agents`: role event streams (concept/coder/reviewer/qa)
+3. `debate`: council agent streams (red/blue/green + orchestrator)
+
+Start:
+
+```bash
+./scripts/start_team_tmux.sh --profile low-spec
+```
+
+Stop:
+
+```bash
+./scripts/stop_team_tmux.sh
+```
 
 ## Shutdown / resume
 
@@ -46,6 +76,23 @@ Then use chat commands:
 ```
 
 State is persisted under `team/state/` using JSON + JSONL event log for restart recovery.
+
+## Debate workflow (3-agent discussion)
+
+Create debate:
+
+```bash
+python3 team/orchestrator.py debate "Stack decision" "Do we keep modular monolith or split services?"
+python3 team/orchestrator.py debates
+python3 team/orchestrator.py run-debate DEBATE-0001
+```
+
+Roles:
+
+- `council_red`: engineering architecture position
+- `council_blue`: reliability/risk/security position
+- `council_green`: product/growth/time-to-market position
+- `orchestrator`: moderator synthesis
 
 ## Pipeline workflow
 
@@ -78,6 +125,20 @@ Optional flags:
 - `--continue-on-failure`
 - `--stop-when-done`
 - `--skip-auth-check`
+
+## Role workspaces and git/github
+
+Role-specific workspaces are configured in `team/config/workspaces.json`.
+If a workspace exists, the orchestrator runs that role's Codex task in that workspace directory.
+
+Create workspaces (git worktrees):
+
+```bash
+./scripts/setup_workspaces.sh --base-branch main
+./scripts/workspaces_status.sh
+```
+
+This allows agents to operate on role branches like `agent/coder`, `agent/reviewer`, etc.
 
 ## Stage templates
 

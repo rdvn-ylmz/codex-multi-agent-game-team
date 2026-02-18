@@ -33,3 +33,12 @@ roles:
   - id: devops
     purpose: CI/CD, release and rollback.
     session_mode: on_demand
+  - id: council_red
+    purpose: Debate perspective A for architectural/product tradeoffs.
+    session_mode: on_demand
+  - id: council_blue
+    purpose: Debate perspective B focused on risk and constraints.
+    session_mode: on_demand
+  - id: council_green
+    purpose: Debate perspective C focused on growth and opportunity.
+    session_mode: on_demand
