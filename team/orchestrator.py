@@ -75,9 +75,10 @@ OUTPUT_CONTRACT_ALLOWED_STATUS = {
 }
 
 ROLE_REQUIRED_ARTIFACT_PATHS: dict[str, list[str]] = {
-    "game_design": ["docs/game_design.md"],
-    "narrative": ["docs/narrative.md", "assets/text/"],
-    "player_experience": ["docs/ux_flow.md"],
+    "concept": ["docs/concept.md"],
+    "game_design": ["docs/game_design.md", "docs/balance_knobs.md"],
+    "narrative": ["docs/narrative.md", "assets/text/ui_copy.md"],
+    "player_experience": ["docs/ux_flow.md", "docs/ftue.md"],
 }
 
 REQUIRED_REPORT_SECTIONS = [
