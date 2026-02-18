@@ -1,5 +1,9 @@
 __pycache__/
 *.pyc
+.cache/
+.data/
+.state/
+.nvimlog
 team/state/runtime_state.json
 team/state/runtime_state.last.json
 team/state/events.jsonl
