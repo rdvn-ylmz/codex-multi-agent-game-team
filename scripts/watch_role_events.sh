@@ -8,7 +8,7 @@ if [[ -z "$ROLE" ]]; then
   exit 1
 fi
 
-EVENT_FILE="$ROOT_DIR/team/state/events.jsonl"
+EVENT_FILE="${TEAM_EVENTS_PATH:-$ROOT_DIR/team/state/events.jsonl}"
 mkdir -p "$(dirname "$EVENT_FILE")"
 touch "$EVENT_FILE"
 

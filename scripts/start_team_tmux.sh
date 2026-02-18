@@ -6,6 +6,7 @@ SESSION_NAME="codex-team"
 PROFILE="low-spec"
 NO_ATTACH=0
 SKIP_AUTH=0
+EVENT_FILE_DEFAULT="$ROOT_DIR/team/state/events.jsonl"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -43,13 +44,17 @@ if [[ "$SKIP_AUTH" -eq 1 ]]; then
 fi
 "${start_cmd[@]}"
 
+EVENT_FILE="${TEAM_EVENTS_PATH:-$EVENT_FILE_DEFAULT}"
+mkdir -p "$(dirname "$EVENT_FILE")"
+touch "$EVENT_FILE"
+
 if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
   tmux kill-session -t "$SESSION_NAME"
 fi
 
 tmux new-session -d -s "$SESSION_NAME" -n control "cd '$ROOT_DIR' && python3 team/orchestrator.py chat"
 tmux split-window -h -t "$SESSION_NAME:control" "cd '$ROOT_DIR' && watch -n 2 ./scripts/team_status.sh"
-tmux split-window -v -t "$SESSION_NAME:control.1" "cd '$ROOT_DIR' && tail -f team/state/events.jsonl"
+tmux split-window -v -t "$SESSION_NAME:control.1" "cd '$ROOT_DIR' && tail -f '$EVENT_FILE'"
 tmux select-layout -t "$SESSION_NAME:control" tiled
 
 tmux new-window -t "$SESSION_NAME" -n agents "cd '$ROOT_DIR' && ./scripts/watch_role_events.sh concept"
