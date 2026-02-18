@@ -70,6 +70,7 @@ OUTPUT_CONTRACT_ALLOWED_STATUS = {
     "blocked",
     "needs_fix_format",
     "ready_for_handoff",
+    "dispatched",
     "approved_or_changes_requested",
     "passed_or_failed",
 }
