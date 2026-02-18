@@ -70,6 +70,18 @@ If any are missing, return task to same role with a specific fix request.
 
 ---
 
+## Task Compression Layer (Mandatory)
+After receiving any stage output (`concept`, `game_design`, `narrative`, `player_experience`, `coder`, `reviewer`, `qa`, `security`, `sre`, `devops`):
+1. Produce an `IMMUTABLE SUMMARY` using `team/templates/_shared/task_compression.md`.
+2. Keep it 5-10 lines and factual only.
+3. Include exact artifacts (file paths/commands).
+4. Include next role and concrete next actions.
+5. Always append the compression JSON footer.
+
+This summary is the primary handoff context for subsequent stages.
+
+---
+
 ## Loop Prevention
 If a task bounces between the same two roles more than 2 times:
 - Summarize disagreement.
