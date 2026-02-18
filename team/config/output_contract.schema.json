@@ -17,7 +17,16 @@
     "owner": {"type": "string"},
     "status": {
       "type": "string",
-      "enum": ["done", "needs_review", "needs_changes", "blocked", "needs_fix_format", "ready_for_handoff"]
+      "enum": [
+        "done",
+        "needs_review",
+        "needs_changes",
+        "blocked",
+        "needs_fix_format",
+        "ready_for_handoff",
+        "approved_or_changes_requested",
+        "passed_or_failed"
+      ]
     },
     "acceptance_criteria": {
       "type": "array",
