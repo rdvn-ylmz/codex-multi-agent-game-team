@@ -78,6 +78,15 @@ ROLE_REQUIRED_ARTIFACT_PATHS: dict[str, list[str]] = {
     "player_experience": ["docs/ux_flow.md"],
 }
 
+REQUIRED_REPORT_SECTIONS = [
+    "## Task Meta",
+    "## Context I Need",
+    "## Plan",
+    "## Work / Decisions",
+    "## Artifacts",
+    "## Handoff",
+]
+
 
 @dataclass
 class CodexResult:
@@ -321,12 +330,25 @@ def validate_output_contract(role: str, task: dict[str, Any], contract: dict[str
         errors.append("acceptance_criteria must be a non-empty list")
 
     handoff_to = contract.get("handoff_to")
-    if handoff_to is not None and not isinstance(handoff_to, list):
-        errors.append("handoff_to must be a list when provided")
+    if not isinstance(handoff_to, list) or len(handoff_to) == 0:
+        errors.append("handoff_to must be a non-empty list")
 
     next_actions = contract.get("next_role_action_items")
-    if next_actions is not None and not isinstance(next_actions, list):
-        errors.append("next_role_action_items must be a list when provided")
+    if not isinstance(next_actions, list) or len(next_actions) == 0:
+        errors.append("next_role_action_items must be a non-empty list")
+    else:
+        for idx, action_item in enumerate(next_actions, start=1):
+            if not isinstance(action_item, dict):
+                errors.append(f"next_role_action_items[{idx}] must be an object")
+                continue
+            role_value = action_item.get("role")
+            items_value = action_item.get("items")
+            if not isinstance(role_value, str) or not role_value.strip():
+                errors.append(f"next_role_action_items[{idx}].role must be a non-empty string")
+            if not isinstance(items_value, list) or len(items_value) == 0:
+                errors.append(f"next_role_action_items[{idx}].items must be a non-empty list")
+            elif not all(isinstance(item, str) and item.strip() for item in items_value):
+                errors.append(f"next_role_action_items[{idx}].items must contain non-empty strings")
 
     required_paths = ROLE_REQUIRED_ARTIFACT_PATHS.get(role, [])
     if required_paths:
@@ -338,6 +360,21 @@ def validate_output_contract(role: str, task: dict[str, Any], contract: dict[str
             elif required_path not in paths:
                 errors.append(f"Missing required artifact path: {required_path}")
 
+    return errors
+
+
+def validate_report_structure(message: str) -> list[str]:
+    errors: list[str] = []
+    lower_message = message.lower()
+    for section in REQUIRED_REPORT_SECTIONS:
+        if section.lower() not in lower_message:
+            errors.append(f"Missing report section: {section}")
+    return errors
+
+
+def validate_task_output(role: str, task: dict[str, Any], message: str, contract: dict[str, Any] | None) -> list[str]:
+    errors = validate_output_contract(role, task, contract)
+    errors.extend(validate_report_structure(message))
     return errors
 
 
@@ -1297,7 +1334,7 @@ def _dispatch_task_object(state: dict[str, Any], task: dict[str, Any]) -> int:
             break
 
         contract = extract_output_contract(result.message)
-        contract_errors = validate_output_contract(role, task, contract)
+        contract_errors = validate_task_output(role, task, result.message, contract)
         if not contract_errors:
             break
 

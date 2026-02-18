@@ -205,6 +205,12 @@ workflow:
         errors = orchestrator.validate_output_contract("game_design", task, contract)
         self.assertTrue(any("docs/game_design.md" in err for err in errors))
 
+    def test_validate_report_structure_requires_all_sections(self) -> None:
+        message = "## Task Meta\nx\n## Plan\nx\n"
+        errors = orchestrator.validate_report_structure(message)
+        self.assertTrue(any("## Context I Need" in err for err in errors))
+        self.assertTrue(any("## Work / Decisions" in err for err in errors))
+
 
 if __name__ == "__main__":
     unittest.main()
