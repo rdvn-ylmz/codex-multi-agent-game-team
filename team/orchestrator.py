@@ -82,13 +82,11 @@ ROLE_REQUIRED_ARTIFACT_PATHS: dict[str, list[str]] = {
     "player_experience": ["docs/ux_flow.md", "docs/ftue.md"],
 }
 
-REQUIRED_REPORT_SECTIONS = [
-    "## Task Meta",
-    "## Context I Need",
-    "## Plan",
-    "## Work / Decisions",
-    "## Artifacts",
-    "## Handoff",
+REQUIRED_REPORT_SECTION_ALTERNATIVES = [
+    ("task meta", ["## task meta", "### task meta", "### task status summary"]),
+    ("acceptance criteria", ["## acceptance criteria", "### acceptance criteria"]),
+    ("artifacts", ["## artifacts", "### artifacts", "### required artifacts"]),
+    ("handoff", ["## handoff", "### handoff", "### handoff instructions"]),
 ]
 
 
@@ -293,6 +291,11 @@ def _artifact_paths_from_contract(contract: dict[str, Any]) -> list[str]:
         if not isinstance(artifact, dict):
             continue
 
+        path = artifact.get("path")
+        if isinstance(path, str):
+            paths.append(path.strip())
+            continue
+
         value = artifact.get("value")
         if isinstance(value, str):
             paths.append(value.strip())
@@ -370,9 +373,9 @@ def validate_output_contract(role: str, task: dict[str, Any], contract: dict[str
 def validate_report_structure(message: str) -> list[str]:
     errors: list[str] = []
     lower_message = message.lower()
-    for section in REQUIRED_REPORT_SECTIONS:
-        if section.lower() not in lower_message:
-            errors.append(f"Missing report section: {section}")
+    for label, alternatives in REQUIRED_REPORT_SECTION_ALTERNATIVES:
+        if not any(option in lower_message for option in alternatives):
+            errors.append(f"Missing report section: {label}")
     return errors
 
 
@@ -877,13 +880,8 @@ def build_role_gate_guidance(role: str) -> str:
 def build_output_contract_prompt(task: dict[str, Any], role: str) -> str:
     return (
         "Output contract (strict):\n"
-        "- Include markdown sections in this exact order:\n"
-        "  1) Task Meta\n"
-        "  2) Context I Need\n"
-        "  3) Plan\n"
-        "  4) Work / Decisions\n"
-        "  5) Artifacts\n"
-        "  6) Handoff\n"
+        "- Include markdown sections covering: Task Meta, Acceptance Criteria, Artifacts, and Handoff.\n"
+        "- Section titles may follow the active stage template wording.\n"
         "- End response with ONE fenced JSON block (```json ... ```).\n"
         "- JSON required fields: task_id, owner, status, acceptance_criteria, artifacts, risks, handoff_to, next_role_action_items.\n"
         f"- task_id must be exactly {task['id']}.\n"

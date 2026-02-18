@@ -42,9 +42,13 @@
           {"type": "string"},
           {
             "type": "object",
-            "required": ["type", "value"],
+            "anyOf": [
+              {"required": ["type", "value"]},
+              {"required": ["type", "path"]}
+            ],
             "properties": {
               "type": {"type": "string"},
+              "path": {"type": "string"},
               "value": {
                 "oneOf": [
                   {"type": "string"},
