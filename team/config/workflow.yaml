@@ -1,0 +1,25 @@
+version: 1
+workflow:
+  mode: codex_only
+  orchestration: central_orchestrator
+  max_active_sessions: 2
+  task_state_machine:
+    - backlog
+    - queued
+    - running
+    - review
+    - qa
+    - ready_to_merge
+    - done
+    - failed
+  communication:
+    type: artifact_first
+    required_fields:
+      - task_id
+      - owner
+      - acceptance_criteria
+      - artifacts
+  low_spec_strategy:
+    worker_pool: 1-2
+    idle_timeout_sec: 90
+    heavy_tests: ci_only

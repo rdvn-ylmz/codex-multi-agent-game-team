@@ -1,0 +1,35 @@
+version: 1
+roles:
+  - id: orchestrator
+    purpose: Routes requests, manages queue and handoffs.
+    session_mode: persistent
+  - id: concept
+    purpose: Product concept, market framing, positioning.
+    session_mode: on_demand
+  - id: game_design
+    purpose: Core loop, progression, economy, content pacing.
+    session_mode: on_demand
+  - id: narrative
+    purpose: Scenario writing, world and mission text.
+    session_mode: on_demand
+  - id: player_experience
+    purpose: Onboarding, UX friction and retention loops.
+    session_mode: on_demand
+  - id: coder
+    purpose: Implements tasks in repository.
+    session_mode: on_demand
+  - id: reviewer
+    purpose: Code review and risk checks.
+    session_mode: on_demand
+  - id: qa
+    purpose: Test scenarios and regression checks.
+    session_mode: on_demand
+  - id: security
+    purpose: Threat modeling and abuse prevention.
+    session_mode: on_demand
+  - id: sre
+    purpose: Reliability, scalability, observability.
+    session_mode: on_demand
+  - id: devops
+    purpose: CI/CD, release and rollback.
+    session_mode: on_demand

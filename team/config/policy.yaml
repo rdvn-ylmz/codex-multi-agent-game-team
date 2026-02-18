@@ -1,0 +1,11 @@
+version: 1
+policy:
+  approval_mode: never
+  sandbox_mode: danger_full_access
+  codex_only: true
+  branch_protection:
+    direct_push_main: false
+    require_ci_for_merge: true
+  safety_guards:
+    forbid_destructive_git_without_task: true
+    require_artifact_for_done: true

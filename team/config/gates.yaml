@@ -1,0 +1,20 @@
+version: 1
+gates:
+  merge:
+    - lint
+    - unit_tests
+    - security_scan
+    - architecture_check
+    - review_approval
+  release:
+    - e2e_tests
+    - performance_budget
+    - reliability_slo
+    - observability_baseline
+    - rollback_plan
+  nfr:
+    - design_patterns
+    - resiliency_patterns
+    - software_architecture
+    - system_design
+    - reliability_scalability_observability
