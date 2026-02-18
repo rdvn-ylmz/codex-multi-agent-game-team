@@ -1,0 +1,38 @@
+name: quality-gates
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  quality-gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+
+      - name: Lint
+        run: ./scripts/lint.sh
+
+      - name: Test
+        run: ./scripts/test.sh
+
+      - name: Security scan
+        run: ./scripts/security_scan.sh
+
+      - name: Performance budget
+        run: ./scripts/perf_budget.sh

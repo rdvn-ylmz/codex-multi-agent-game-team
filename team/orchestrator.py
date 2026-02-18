@@ -17,6 +17,7 @@ TEAM_DIR = ROOT / "team"
 CONFIG_DIR = TEAM_DIR / "config"
 STATE_DIR = TEAM_DIR / "state"
 TASK_OUTPUT_DIR = STATE_DIR / "task_outputs"
+STAGE_TEMPLATE_DIR = TEAM_DIR / "templates" / "stages"
 
 STATE_FILE = Path(os.getenv("TEAM_STATE_PATH", STATE_DIR / "runtime_state.json"))
 EVENTS_FILE = Path(os.getenv("TEAM_EVENTS_PATH", STATE_DIR / "events.jsonl"))
@@ -119,6 +120,13 @@ def read_default_pipeline() -> list[str]:
     workflow_file = CONFIG_DIR / "workflow.yaml"
     roles = _parse_yaml_id_list(workflow_file, "default_pipeline")
     return roles or DEFAULT_PIPELINE_ROLES
+
+
+def load_stage_template(role: str) -> str:
+    template_file = STAGE_TEMPLATE_DIR / f"{role}.md"
+    if template_file.exists():
+        return template_file.read_text(encoding="utf-8").strip()
+    return ""
 
 
 def base_config() -> dict[str, Any]:
@@ -331,6 +339,7 @@ def create_pipeline(
     depends_on: list[str] = []
 
     for index, role in enumerate(roles, start=1):
+        stage_template = load_stage_template(role)
         stage_title = f"[{pipeline_id}] {title} :: {role}"
         stage_description = (
             f"Pipeline ID: {pipeline_id}\n"
@@ -342,6 +351,9 @@ def create_pipeline(
             "- Read handoff context from previous stage outputs if available.\n"
             "- Include risks and next handoff in final report.\n"
         )
+        if stage_template:
+            stage_description += "\nStage template:\n"
+            stage_description += stage_template + "\n"
         task = enqueue_task(
             state,
             role,

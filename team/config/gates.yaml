@@ -18,3 +18,8 @@ gates:
     - software_architecture
     - system_design
     - reliability_scalability_observability
+commands:
+  lint: ./scripts/lint.sh
+  unit_tests: ./scripts/test.sh
+  security_scan: ./scripts/security_scan.sh
+  performance_budget: ./scripts/perf_budget.sh
