@@ -168,6 +168,43 @@ workflow:
         self.assertEqual(task["status"], "queued")
         self.assertIsNone(task["started_at"])
 
+    def test_extract_output_contract_from_fenced_json(self) -> None:
+        report = """
+## Task Meta
+...
+
+```json
+{
+  "task_id": "TASK-0001",
+  "owner": "coder",
+  "status": "done",
+  "acceptance_criteria": ["ac1"],
+  "artifacts": [{"type": "files_changed", "value": ["docs/a.md"]}],
+  "risks": [],
+  "handoff_to": ["reviewer"],
+  "next_role_action_items": [{"role": "reviewer", "items": ["check docs/a.md"]}]
+}
+```
+"""
+        contract = orchestrator.extract_output_contract(report)
+        self.assertIsNotNone(contract)
+        self.assertEqual(contract["task_id"], "TASK-0001")
+
+    def test_validate_output_contract_requires_role_artifacts(self) -> None:
+        task = {"id": "TASK-7777"}
+        contract = {
+            "task_id": "TASK-7777",
+            "owner": "game_design",
+            "status": "done",
+            "acceptance_criteria": ["ac1"],
+            "artifacts": [{"type": "files_changed", "value": ["docs/other.md"]}],
+            "risks": [],
+            "handoff_to": ["narrative"],
+            "next_role_action_items": [{"role": "narrative", "items": ["do x"]}],
+        }
+        errors = orchestrator.validate_output_contract("game_design", task, contract)
+        self.assertTrue(any("docs/game_design.md" in err for err in errors))
+
 
 if __name__ == "__main__":
     unittest.main()

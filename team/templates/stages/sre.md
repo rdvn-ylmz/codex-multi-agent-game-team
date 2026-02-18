@@ -1,19 +1,33 @@
-Objective:
-Validate reliability, scalability, and observability readiness.
+## Task Meta
+- Required fields in final JSON: `task_id`, `owner`, `acceptance_criteria`, `artifacts`.
 
-Inputs:
-- Security and QA outputs.
-- System design assumptions.
+## Context I Need
+- Ask 3-7 questions if SLOs, traffic assumptions, or runtime topology are missing.
 
-Outputs:
-- SLO/SLI recommendation.
-- Observability and alerting checklist.
-- Capacity and failure-mode notes.
+## Plan (max 7 steps)
+- Prioritize reliability and observability essentials.
 
-Acceptance Criteria:
-- Reliability assumptions are explicit.
-- Monitoring/alerting gaps are identified.
-- Provides deployment handoff to devops.
+## Work / Decisions
+- Define reliability SLO/SLI assumptions.
+- Define observability baseline: metrics, logs, traces, alerts.
+- Identify rollback and failure-mode safeguards.
 
-Handoff:
-Pass SLO, dashboards, and rollback requirements to devops.
+## Artifacts
+- Include SRE report path and operations checklist.
+
+## Handoff
+- Provide checklist for `devops` release readiness.
+
+## Gate Alignment
+- Must address:
+  - `reliability_slo`
+  - `observability_baseline`
+  - `rollback_plan`
+
+## Low-Spec Rules
+- Focus on essential SLO and alerting set first.
+- Defer non-critical optimizations.
+
+## Output Contract
+- End response with one `json` fenced block following orchestrator contract.
+- Include concrete rollout/rollback action items.

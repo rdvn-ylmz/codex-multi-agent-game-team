@@ -17,8 +17,9 @@ This repository bootstraps a Codex-only multi-agent workflow that runs in a sing
 - `.github/workflows/quality-gates.yml`: CI quality gates
 - `scripts/lint.sh`, `scripts/test.sh`, `scripts/security_scan.sh`, `scripts/perf_budget.sh`
 - `team/config/*.yaml`, `team/config/workspaces.json`: runtime configs
+- `team/config/output_contract.schema.json`: machine-readable output schema
 - `team/templates/stages/*.md`: role-specific stage templates
-- `team/prompts/council_*.md`: 3-agent debate personas
+- `team/prompts/orchestrator_system.md`, `team/prompts/council_*.md`: orchestration and debate personas
 
 ## Quick start
 
@@ -144,6 +145,33 @@ This allows agents to operate on role branches like `agent/coder`, `agent/review
 
 Pipeline stages inject role templates from `team/templates/stages/<role>.md` into each task description.
 Use these templates to standardize acceptance criteria and handoff quality for concept/design/story/engineering/release work.
+Templates now enforce a fixed skeleton:
+
+1. `Task Meta`
+2. `Context I Need`
+3. `Plan (max 7 steps)`
+4. `Work / Decisions`
+5. `Artifacts`
+6. `Handoff`
+
+Each task must end with a machine-readable JSON footer contract.
+
+## Output contract
+
+Schema: `team/config/output_contract.schema.json`
+
+Required JSON fields:
+
+- `task_id`
+- `owner`
+- `status`
+- `acceptance_criteria`
+- `artifacts`
+- `risks`
+- `handoff_to`
+- `next_role_action_items`
+
+If JSON contract is invalid, orchestrator retries once (`MAX_OUTPUT_FORMAT_RETRIES=1`) and fails the task if still invalid.
 
 ## Quality gates
 

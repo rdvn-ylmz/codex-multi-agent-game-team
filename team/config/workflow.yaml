@@ -35,6 +35,10 @@ workflow:
       - owner
       - acceptance_criteria
       - artifacts
+  output_contract:
+    schema: team/config/output_contract.schema.json
+    retry_on_invalid: 1
+    require_json_footer: true
   low_spec_strategy:
     worker_pool: 1-2
     idle_timeout_sec: 90

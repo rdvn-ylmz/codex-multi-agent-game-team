@@ -61,6 +61,23 @@ DEFAULT_DEBATE_ROLES = [
 
 DEFAULT_DEBATE_MODERATOR = "orchestrator"
 
+MAX_OUTPUT_FORMAT_RETRIES = int(os.getenv("MAX_OUTPUT_FORMAT_RETRIES", "1"))
+OUTPUT_CONTRACT_REQUIRED_FIELDS = ["task_id", "owner", "acceptance_criteria", "artifacts"]
+OUTPUT_CONTRACT_ALLOWED_STATUS = {
+    "done",
+    "needs_review",
+    "needs_changes",
+    "blocked",
+    "needs_fix_format",
+    "ready_for_handoff",
+}
+
+ROLE_REQUIRED_ARTIFACT_PATHS: dict[str, list[str]] = {
+    "game_design": ["docs/game_design.md"],
+    "narrative": ["docs/narrative.md", "assets/text/"],
+    "player_experience": ["docs/ux_flow.md"],
+}
+
 
 @dataclass
 class CodexResult:
@@ -160,6 +177,13 @@ def load_stage_template(role: str) -> str:
     return ""
 
 
+def load_orchestrator_system_prompt() -> str:
+    system_file = TEAM_DIR / "prompts" / "orchestrator_system.md"
+    if system_file.exists():
+        return system_file.read_text(encoding="utf-8").strip()
+    return ""
+
+
 def read_workspace_config() -> dict[str, Any]:
     if WORKSPACE_CONFIG_FILE.exists():
         with WORKSPACE_CONFIG_FILE.open("r", encoding="utf-8") as handle:
@@ -191,6 +215,143 @@ def resolve_role_workdir(role: str) -> Path:
     if workdir.exists() and workdir.is_dir():
         return workdir
     return ROOT
+
+
+def _extract_json_from_fenced_block(text: str) -> dict[str, Any] | None:
+    marker = "```json"
+    lower_text = text.lower()
+    lower_marker = marker.lower()
+    start = lower_text.rfind(lower_marker)
+    if start < 0:
+        return None
+
+    block_start = text.find("\n", start)
+    if block_start < 0:
+        return None
+    block_start += 1
+
+    end = text.find("```", block_start)
+    if end < 0:
+        return None
+
+    candidate = text[block_start:end].strip()
+    if not candidate:
+        return None
+
+    try:
+        data = json.loads(candidate)
+    except json.JSONDecodeError:
+        return None
+    if isinstance(data, dict):
+        return data
+    return None
+
+
+def extract_output_contract(text: str) -> dict[str, Any] | None:
+    contract = _extract_json_from_fenced_block(text)
+    if contract:
+        return contract
+
+    start = text.rfind("{")
+    end = text.rfind("}")
+    if start < 0 or end < 0 or end <= start:
+        return None
+    candidate = text[start : end + 1].strip()
+
+    try:
+        data = json.loads(candidate)
+    except json.JSONDecodeError:
+        return None
+    if isinstance(data, dict):
+        return data
+    return None
+
+
+def _artifact_paths_from_contract(contract: dict[str, Any]) -> list[str]:
+    artifacts = contract.get("artifacts")
+    if not isinstance(artifacts, list):
+        return []
+
+    paths: list[str] = []
+    for artifact in artifacts:
+        if isinstance(artifact, str):
+            paths.append(artifact.strip())
+            continue
+        if not isinstance(artifact, dict):
+            continue
+
+        value = artifact.get("value")
+        if isinstance(value, str):
+            paths.append(value.strip())
+            continue
+        if isinstance(value, list):
+            for item in value:
+                if isinstance(item, str):
+                    paths.append(item.strip())
+    return [path for path in paths if path]
+
+
+def validate_output_contract(role: str, task: dict[str, Any], contract: dict[str, Any] | None) -> list[str]:
+    errors: list[str] = []
+    if not contract:
+        return ["Missing JSON output contract footer."]
+
+    for field in OUTPUT_CONTRACT_REQUIRED_FIELDS:
+        if field not in contract:
+            errors.append(f"Missing required field: {field}")
+
+    task_id = str(contract.get("task_id", ""))
+    if task_id and task_id != str(task.get("id")):
+        errors.append(f"task_id mismatch: expected {task.get('id')}, got {task_id}")
+
+    owner = str(contract.get("owner", ""))
+    if owner and owner != role:
+        errors.append(f"owner mismatch: expected {role}, got {owner}")
+
+    status = str(contract.get("status", "done")).strip()
+    if status and status not in OUTPUT_CONTRACT_ALLOWED_STATUS:
+        errors.append(f"Invalid status: {status}")
+
+    artifacts = contract.get("artifacts")
+    if not isinstance(artifacts, list) or len(artifacts) == 0:
+        errors.append("artifacts must be a non-empty list")
+
+    acceptance = contract.get("acceptance_criteria")
+    if not isinstance(acceptance, list) or len(acceptance) == 0:
+        errors.append("acceptance_criteria must be a non-empty list")
+
+    handoff_to = contract.get("handoff_to")
+    if handoff_to is not None and not isinstance(handoff_to, list):
+        errors.append("handoff_to must be a list when provided")
+
+    next_actions = contract.get("next_role_action_items")
+    if next_actions is not None and not isinstance(next_actions, list):
+        errors.append("next_role_action_items must be a list when provided")
+
+    required_paths = ROLE_REQUIRED_ARTIFACT_PATHS.get(role, [])
+    if required_paths:
+        paths = _artifact_paths_from_contract(contract)
+        for required_path in required_paths:
+            if required_path.endswith("/"):
+                if not any(path.startswith(required_path) for path in paths):
+                    errors.append(f"Missing required artifact path prefix: {required_path}")
+            elif required_path not in paths:
+                errors.append(f"Missing required artifact path: {required_path}")
+
+    return errors
+
+
+def format_contract_error_feedback(errors: list[str], task: dict[str, Any], role: str) -> str:
+    bullet_lines = "\n".join(f"- {err}" for err in errors)
+    return (
+        "Your previous response did not satisfy the required output contract.\n"
+        f"Task ID: {task['id']}\n"
+        f"Role: {role}\n"
+        "Fix only the response formatting/content contract and reply again.\n"
+        "Do not omit the markdown sections and the final JSON block.\n"
+        "Validation errors:\n"
+        f"{bullet_lines}\n"
+    )
 
 
 def base_config() -> dict[str, Any]:
@@ -428,6 +589,7 @@ def create_pipeline(
             "- Keep output concise and artifact-based.\n"
             "- Read handoff context from previous stage outputs if available.\n"
             "- Include risks and next handoff in final report.\n"
+            "- Follow output contract schema at team/config/output_contract.schema.json.\n"
         )
         if stage_template:
             stage_description += "\nStage template:\n"
@@ -495,6 +657,7 @@ def create_debate(
                 "- Argue one distinct approach with concrete tradeoffs.\n"
                 "- Challenge assumptions and mention risks.\n"
                 "- Give actionable recommendations for the moderator.\n"
+                "- Follow output contract schema at team/config/output_contract.schema.json.\n"
             ),
             metadata={
                 "debate_id": debate_id,
@@ -516,6 +679,7 @@ def create_debate(
             "- Read all participant outputs.\n"
             "- Summarize agreements and disagreements.\n"
             "- Produce final recommendation with rationale and next tasks.\n"
+            "- Follow output contract schema at team/config/output_contract.schema.json.\n"
         ),
         metadata={
             "debate_id": debate_id,
@@ -626,6 +790,66 @@ def codex_command(prompt: str, session_id: str | None) -> list[str]:
     return cmd
 
 
+def build_low_spec_prompt_rules() -> str:
+    return (
+        "Low-spec runtime rules:\n"
+        "- Keep changes minimal and focused.\n"
+        "- Minimize file count and command count.\n"
+        "- Prefer quick local checks only; heavy tests stay in CI.\n"
+        "- Keep planning concise and execution-oriented.\n"
+    )
+
+
+def build_role_gate_guidance(role: str) -> str:
+    role_gate_map: dict[str, list[str]] = {
+        "coder": [
+            "Before marking done, run fast local checks aligned with lint + unit_tests.",
+            "If local resources are constrained, run subset locally and state that full suite is CI-only.",
+        ],
+        "reviewer": [
+            "Provide file-referenced findings for architecture_check and review_approval.",
+            "Return explicit merge recommendation: approve or needs_changes.",
+        ],
+        "qa": [
+            "List smoke/regression flows executed and expected outcomes.",
+            "Call out pass/fail status per flow.",
+        ],
+        "security": [
+            "Provide threat model delta in STRIDE-style bullets where relevant.",
+            "Include severity, exploit scenario, and concrete fix recommendation per issue.",
+        ],
+        "sre": [
+            "Provide reliability_slo assumptions and observability baseline.",
+            "Include rollback safety checks and missing signals.",
+        ],
+        "devops": [
+            "Include deploy checklist, rollback plan, and release gate confirmation.",
+            "Flag unknowns that block safe release.",
+        ],
+    }
+    role_rules = role_gate_map.get(role, [])
+    if not role_rules:
+        return ""
+    return "Gate-aligned role requirements:\n" + "\n".join(f"- {rule}" for rule in role_rules) + "\n"
+
+
+def build_output_contract_prompt(task: dict[str, Any], role: str) -> str:
+    return (
+        "Output contract (strict):\n"
+        "- Include markdown sections in this exact order:\n"
+        "  1) Task Meta\n"
+        "  2) Context I Need\n"
+        "  3) Plan\n"
+        "  4) Work / Decisions\n"
+        "  5) Artifacts\n"
+        "  6) Handoff\n"
+        "- End response with ONE fenced JSON block (```json ... ```).\n"
+        "- JSON required fields: task_id, owner, status, acceptance_criteria, artifacts, risks, handoff_to, next_role_action_items.\n"
+        f"- task_id must be exactly {task['id']}.\n"
+        f"- owner must be exactly {role}.\n"
+    )
+
+
 def build_handoff_context(state: dict[str, Any], task: dict[str, Any]) -> str:
     dep_ids = task_dependencies(task)
     if not dep_ids:
@@ -667,8 +891,11 @@ def run_codex_task(
     session_id: str | None,
     handoff_context: str,
     workdir: Path,
+    correction_feedback: str = "",
 ) -> CodexResult:
+    system_prompt = load_orchestrator_system_prompt()
     role_prompt = load_role_prompt(role)
+    contract_prompt = build_output_contract_prompt(task, role)
     prompt = (
         f"Role: {role}\n"
         f"Task ID: {task['id']}\n"
@@ -676,16 +903,26 @@ def run_codex_task(
         f"Description:\n{task['description']}\n\n"
         f"Work directory: {workdir}\n"
         "Work in the current repository.\n"
-        "Return a concise execution report with:\n"
-        "1) Summary\n2) Files changed\n3) Risks and next handoff\n"
+        f"{build_low_spec_prompt_rules()}\n"
+        f"{build_role_gate_guidance(role)}\n"
+        f"{contract_prompt}\n"
     )
 
     if handoff_context:
         prompt += "\nPipeline handoff context from previous stages:\n"
         prompt += handoff_context + "\n"
 
+    if correction_feedback:
+        prompt += "\nContract correction request:\n"
+        prompt += correction_feedback + "\n"
+
+    prefix_parts: list[str] = []
+    if system_prompt:
+        prefix_parts.append(system_prompt)
     if role_prompt:
-        prompt = role_prompt + "\n\n" + prompt
+        prefix_parts.append(role_prompt)
+    if prefix_parts:
+        prompt = "\n\n".join(prefix_parts + [prompt])
 
     cmd = codex_command(prompt, session_id)
     process = subprocess.run(cmd, capture_output=True, text=True, cwd=workdir)
@@ -1036,18 +1273,62 @@ def _dispatch_task_object(state: dict[str, Any], task: dict[str, Any]) -> int:
     )
 
     handoff_context = build_handoff_context(state, task)
-    result = run_codex_task(role, task, role_state.get("session_id"), handoff_context, workdir)
+    attempts = 0
+    result: CodexResult | None = None
+    contract: dict[str, Any] | None = None
+    contract_errors: list[str] = []
+    correction_feedback = ""
 
-    if result.session_id:
-        role_state["session_id"] = result.session_id
+    while attempts <= MAX_OUTPUT_FORMAT_RETRIES:
+        attempts += 1
+        result = run_codex_task(
+            role,
+            task,
+            role_state.get("session_id"),
+            handoff_context,
+            workdir,
+            correction_feedback=correction_feedback,
+        )
 
-    if result.return_code == 0:
+        if result.session_id:
+            role_state["session_id"] = result.session_id
+
+        if result.return_code != 0:
+            break
+
+        contract = extract_output_contract(result.message)
+        contract_errors = validate_output_contract(role, task, contract)
+        if not contract_errors:
+            break
+
+        append_event(
+            "task_output_contract_invalid",
+            {
+                "task_id": task["id"],
+                "role": role,
+                "attempt": attempts,
+                "errors": contract_errors,
+            },
+        )
+        correction_feedback = format_contract_error_feedback(contract_errors, task, role)
+
+    if not result:
+        task["status"] = "failed"
+        task["error"] = "Internal error: task execution did not produce a result"
+        task["finished_at"] = utc_now()
+        role_state["state"] = "idle"
+        role_state["last_active_at"] = utc_now()
+        save_state(state)
+        return 1
+
+    if result.return_code == 0 and not contract_errors:
         task["status"] = "done"
         task["error"] = None
         content = result.message or "No message returned by Codex."
         output_path = write_task_output(task["id"], content)
         task["output_path"] = output_path
         task["finished_at"] = utc_now()
+        task.setdefault("metadata", {})["output_contract"] = contract
         role_state["tasks_completed"] = int(role_state.get("tasks_completed", 0)) + 1
         append_event(
             "task_completed",
@@ -1058,13 +1339,17 @@ def _dispatch_task_object(state: dict[str, Any], task: dict[str, Any]) -> int:
                 "debate_id": debate_id,
                 "workdir": str(workdir),
                 "output_path": output_path,
+                "attempts": attempts,
             },
         )
         print(f"Completed {task['id']} ({role})")
         print(f"Output: {output_path}")
     else:
         task["status"] = "failed"
-        task["error"] = result.stderr or "Codex execution failed"
+        if contract_errors:
+            task["error"] = "Output contract invalid: " + "; ".join(contract_errors)
+        else:
+            task["error"] = result.stderr or "Codex execution failed"
         task["finished_at"] = utc_now()
         append_event(
             "task_failed",
@@ -1075,6 +1360,7 @@ def _dispatch_task_object(state: dict[str, Any], task: dict[str, Any]) -> int:
                 "debate_id": debate_id,
                 "workdir": str(workdir),
                 "error": task["error"],
+                "attempts": attempts,
             },
         )
         print(f"Failed {task['id']} ({role})", file=sys.stderr)
@@ -1378,11 +1664,17 @@ def print_task_report(task_id: str, max_chars: int = 5000) -> None:
         return
 
     content = file_path.read_text(encoding="utf-8").strip()
+    contract = extract_output_contract(content)
     if len(content) > max_chars:
         content = content[:max_chars] + "\n\n[truncated]"
 
     print(f"--- {task_id} report ({task.get('role')}) ---")
     print(content)
+    if contract:
+        status = contract.get("status", "-")
+        handoff_to = contract.get("handoff_to", [])
+        print("--- parsed contract ---")
+        print(f"status={status} handoff_to={handoff_to}")
     print("--- end report ---")
 
 

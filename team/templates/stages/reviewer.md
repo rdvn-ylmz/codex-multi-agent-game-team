@@ -1,17 +1,33 @@
-Objective:
-Review implementation quality, regressions, and architecture compliance.
+## Task Meta
+- Required fields in final JSON: `task_id`, `owner`, `acceptance_criteria`, `artifacts`.
 
-Inputs:
-- Code changes and coder handoff report.
+## Context I Need
+- Ask 3-7 questions only if requirements/test evidence are missing.
 
-Outputs:
-- Prioritized findings with severity.
-- Merge-readiness decision and required fixes.
+## Plan (max 7 steps)
+- Keep review plan concise and risk-prioritized.
 
-Acceptance Criteria:
-- Findings include concrete file references.
-- Security, reliability, and maintainability risks are assessed.
-- Provides handoff to qa and coder.
+## Work / Decisions
+- Review for correctness, regressions, architecture, and maintainability.
+- Findings must include severity and file references.
 
-Handoff:
-Pass required fixes and validation focus areas to qa/coder.
+## Artifacts
+- Include review report path and findings summary.
+- Include decision: approve or needs_changes.
+
+## Handoff
+- Provide checklist for `coder` (fixes) and `qa` (validation focus).
+
+## Gate Alignment
+- Enforce:
+  - `architecture_check`
+  - `review_approval`
+- If failing, return explicit blocking reasons.
+
+## Low-Spec Rules
+- Focus on highest risk findings first.
+- Avoid expensive local validation unless needed.
+
+## Output Contract
+- End response with one `json` fenced block following orchestrator contract.
+- `artifacts` should include file-referenced findings.

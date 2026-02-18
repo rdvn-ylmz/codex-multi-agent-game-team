@@ -1,18 +1,32 @@
-Objective:
-Optimize onboarding, UX friction, and long-session engagement.
+## Task Meta
+- Required fields in final JSON: `task_id`, `owner`, `acceptance_criteria`, `artifacts`.
 
-Inputs:
-- Core loop, narrative flow, and target player profile.
+## Context I Need
+- Ask 3-7 questions if controls, platform limits, or accessibility targets are unclear.
 
-Outputs:
-- FTUE sequence and interaction flow.
-- UX friction checklist.
-- Retention-oriented session design notes.
+## Plan (max 7 steps)
+- Prioritize first-session usability and friction reduction.
 
-Acceptance Criteria:
-- First-session path reaches core loop quickly.
-- Key UI and onboarding friction points are resolved.
-- Provides implementation-ready handoff to coder.
+## Work / Decisions
+- Define FTUE, UX flow, and retention-critical interaction points.
+- Explain why each UX decision helps completion and retention.
 
-Handoff:
-Pass UX flows, copy hints, and prioritised improvements to coder.
+## Artifacts
+- MUST include:
+  - `docs/ux_flow.md`
+- Include FTUE steps with expected user actions/results.
+
+## Handoff
+- Provide concrete checklist for `coder`.
+- Include top UX risks for `reviewer` and `qa`.
+
+## Gate Alignment
+- Ensure UX flow can be smoke-tested by QA.
+
+## Low-Spec Rules
+- Keep flows practical and implementation-ready.
+- Avoid heavy prototype/tooling requirements.
+
+## Output Contract
+- End response with one `json` fenced block following orchestrator contract.
+- `artifacts` must include `docs/ux_flow.md`.

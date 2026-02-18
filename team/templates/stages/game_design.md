@@ -1,19 +1,35 @@
-Objective:
-Define core loop, progression, and economy foundations.
+## Task Meta
+- Required fields in final JSON: `task_id`, `owner`, `acceptance_criteria`, `artifacts`.
+- Target status: `done` or `needs_changes`.
 
-Inputs:
-- Approved concept and player segment.
-- Platform and scope constraints.
+## Context I Need
+- Ask 3-7 focused questions if genre/target/monetization constraints are unclear.
 
-Outputs:
-- Core gameplay loop diagram in text form.
-- Progression and reward model.
-- Difficulty and pacing assumptions.
+## Plan (max 7 steps)
+- Keep plan within 7 steps.
+- Prioritize core-loop definition before content expansion.
 
-Acceptance Criteria:
-- Core loop is testable in an MVP build.
-- Progression includes retention hooks and fail states.
-- Provides handoff to narrative and player_experience.
+## Work / Decisions
+- Define core loop, progression, reward cadence, and fail states.
+- Document design decisions with rationale and constraints.
 
-Handoff:
-Pass mechanics, pacing, and economy details to narrative and player_experience.
+## Artifacts
+- MUST include:
+  - `docs/game_design.md`
+- Include explicit MVP scope boundary and non-goals.
+
+## Handoff
+- Provide action checklist for `narrative` and `player_experience`.
+- Flag implementation risks for `coder`.
+
+## Gate Alignment
+- Ensure design supports merge/release gates by being testable in MVP.
+- Avoid ambiguous requirements that block QA automation.
+
+## Low-Spec Rules
+- Prefer compact specs over large speculative docs.
+- Keep output directly actionable for downstream roles.
+
+## Output Contract
+- End response with one `json` fenced block following orchestrator contract.
+- `artifacts` must list `docs/game_design.md`.
