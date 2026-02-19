@@ -4,6 +4,8 @@ import json
 import os
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 
 import team.orchestrator as orchestrator
@@ -13,11 +15,15 @@ class OrchestratorTests(unittest.TestCase):
     def setUp(self) -> None:
         self._original_append_event = orchestrator.append_event
         self._original_workspace_config_file = orchestrator.WORKSPACE_CONFIG_FILE
+        self._original_model_router_file = orchestrator.MODEL_ROUTER_FILE
+        self._original_quota_policy_file = orchestrator.QUOTA_POLICY_FILE
         orchestrator.append_event = lambda *args, **kwargs: None
 
     def tearDown(self) -> None:
         orchestrator.append_event = self._original_append_event
         orchestrator.WORKSPACE_CONFIG_FILE = self._original_workspace_config_file
+        orchestrator.MODEL_ROUTER_FILE = self._original_model_router_file
+        orchestrator.QUOTA_POLICY_FILE = self._original_quota_policy_file
         os.environ.pop("TEAM_PROJECT_ROOT", None)
 
     def test_parse_yaml_id_list_reads_values(self) -> None:
@@ -300,6 +306,117 @@ workflow:
         self.assertIsNotNone(footer)
         self.assertEqual(footer["type"], "compression_summary")
         self.assertEqual(footer["next_owner"], "reviewer")
+
+    def test_model_chain_for_role_respects_configured_limit(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="model-router-") as tmp:
+            tmp_path = Path(tmp)
+            router_file = tmp_path / "model_router.json"
+            router_file.write_text(
+                json.dumps(
+                    {
+                        "default_chain": [
+                            {"backend": "codex", "model": ""},
+                            {"backend": "opencode", "model": "opencode/glm-5-free"},
+                        ],
+                        "roles": {
+                            "coder": [
+                                {"backend": "codex", "model": ""},
+                                {"backend": "opencode", "model": "opencode/kimi-k2.5-free"},
+                                {"backend": "opencode", "model": "opencode/minimax-m2.5-free"},
+                            ]
+                        },
+                        "max_model_attempts_per_task": 2,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            orchestrator.MODEL_ROUTER_FILE = router_file
+
+            coder_chain = orchestrator.model_chain_for_role("coder")
+            qa_chain = orchestrator.model_chain_for_role("qa")
+
+            self.assertEqual(len(coder_chain), 2)
+            self.assertEqual(coder_chain[1]["model"], "opencode/kimi-k2.5-free")
+            self.assertEqual(qa_chain[0]["backend"], "codex")
+
+    def test_set_task_retry_marks_deferred_and_blocks_queue_pick(self) -> None:
+        state = orchestrator.new_state()
+        task = orchestrator.enqueue_task(state, "coder", "Retry later", "Quota exhausted")
+        orchestrator.set_task_retry(task, defer_minutes=5, reason="rate limit")
+        self.assertTrue(orchestrator.is_task_deferred(task))
+        self.assertIsNone(orchestrator.next_queued_task(state))
+        blocked = orchestrator.queued_but_blocked(state)
+        self.assertEqual(len(blocked), 1)
+        self.assertEqual(blocked[0]["id"], task["id"])
+
+    def test_is_quota_error_uses_custom_markers(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="quota-policy-") as tmp:
+            tmp_path = Path(tmp)
+            quota_file = tmp_path / "quota_policy.json"
+            quota_file.write_text(
+                json.dumps(
+                    {
+                        "quota_error_markers": ["my-limit-marker"],
+                        "defer_on_exhausted_models": True,
+                        "defer_minutes_on_exhausted_models": 12,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            orchestrator.QUOTA_POLICY_FILE = quota_file
+
+            self.assertTrue(orchestrator.is_quota_error("request failed: MY-LIMIT-MARKER"))
+            self.assertFalse(orchestrator.is_quota_error("syntax error"))
+
+    def test_dispatch_defers_task_when_all_models_are_quota_exhausted(self) -> None:
+        state = orchestrator.new_state()
+        task = orchestrator.enqueue_task(state, "coder", "Quota fallback", "Test defer behavior")
+
+        original_run_model_task = orchestrator.run_model_task
+        original_model_chain_for_role = orchestrator.model_chain_for_role
+        original_save_state = orchestrator.save_state
+        original_resolve_role_workdir = orchestrator.resolve_role_workdir
+
+        try:
+            def fake_run_model_task(
+                *,
+                role,
+                task,
+                session_id,
+                handoff_context,
+                workdir,
+                backend,
+                model,
+                correction_feedback="",
+            ):
+                return orchestrator.CodexResult(
+                    return_code=1,
+                    session_id=None,
+                    message="",
+                    stderr="429 rate limit",
+                    backend=backend,
+                    model=model,
+                )
+
+            orchestrator.run_model_task = fake_run_model_task
+            orchestrator.model_chain_for_role = lambda _role: [
+                {"backend": "codex", "model": ""},
+                {"backend": "opencode", "model": "opencode/kimi-k2.5-free"},
+            ]
+            orchestrator.save_state = lambda _state: None
+            orchestrator.resolve_role_workdir = lambda _role: Path.cwd()
+
+            with redirect_stdout(StringIO()):
+                code = orchestrator._dispatch_task_object(state, task)
+
+            self.assertEqual(code, 0)
+            self.assertEqual(task["status"], "queued")
+            self.assertTrue(orchestrator.is_task_deferred(task))
+        finally:
+            orchestrator.run_model_task = original_run_model_task
+            orchestrator.model_chain_for_role = original_model_chain_for_role
+            orchestrator.save_state = original_save_state
+            orchestrator.resolve_role_workdir = original_resolve_role_workdir
 
 
 if __name__ == "__main__":

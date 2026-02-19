@@ -1,0 +1,12 @@
+{
+  "defer_on_exhausted_models": true,
+  "defer_minutes_on_exhausted_models": 45,
+  "quota_error_markers": [
+    "rate limit",
+    "quota",
+    "limit exceeded",
+    "too many requests",
+    "429",
+    "insufficient credits"
+  ]
+}

@@ -8,7 +8,7 @@ import re
 import subprocess
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +19,8 @@ STATE_DIR = TEAM_DIR / "state"
 TASK_OUTPUT_DIR = STATE_DIR / "task_outputs"
 STAGE_TEMPLATE_DIR = TEAM_DIR / "templates" / "stages"
 WORKSPACE_CONFIG_FILE = CONFIG_DIR / "workspaces.json"
+MODEL_ROUTER_FILE = CONFIG_DIR / "model_router.json"
+QUOTA_POLICY_FILE = CONFIG_DIR / "quota_policy.json"
 
 STATE_FILE = Path(os.getenv("TEAM_STATE_PATH", STATE_DIR / "runtime_state.json"))
 EVENTS_FILE = Path(os.getenv("TEAM_EVENTS_PATH", STATE_DIR / "events.jsonl"))
@@ -62,6 +64,7 @@ DEFAULT_DEBATE_ROLES = [
 DEFAULT_DEBATE_MODERATOR = "orchestrator"
 
 MAX_OUTPUT_FORMAT_RETRIES = int(os.getenv("MAX_OUTPUT_FORMAT_RETRIES", "1"))
+DEFAULT_MODEL_DEFER_MINUTES = int(os.getenv("MODEL_DEFER_MINUTES", "45"))
 OUTPUT_CONTRACT_REQUIRED_FIELDS = ["task_id", "owner", "acceptance_criteria", "artifacts"]
 OUTPUT_CONTRACT_ALLOWED_STATUS = {
     "done",
@@ -96,6 +99,8 @@ class CodexResult:
     session_id: str | None
     message: str
     stderr: str
+    backend: str = "codex"
+    model: str | None = None
 
 
 def utc_now() -> str:
@@ -192,6 +197,126 @@ def read_default_debate_moderator() -> str:
         if match:
             return match.group(1)
     return DEFAULT_DEBATE_MODERATOR
+
+
+def _load_json_object(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+
+    if isinstance(data, dict):
+        return data
+    return {}
+
+
+def read_model_router_config() -> dict[str, Any]:
+    data = _load_json_object(MODEL_ROUTER_FILE)
+    default_chain = data.get("default_chain")
+    if not isinstance(default_chain, list) or not default_chain:
+        default_chain = [{"backend": "codex", "model": ""}]
+    roles = data.get("roles")
+    if not isinstance(roles, dict):
+        roles = {}
+    return {
+        "default_chain": default_chain,
+        "roles": roles,
+        "max_model_attempts_per_task": int(data.get("max_model_attempts_per_task", 3)),
+    }
+
+
+def normalize_model_chain_entry(entry: Any) -> dict[str, str]:
+    if not isinstance(entry, dict):
+        return {"backend": "codex", "model": ""}
+
+    backend = str(entry.get("backend", "codex")).strip().lower() or "codex"
+    model = str(entry.get("model", "")).strip()
+    return {"backend": backend, "model": model}
+
+
+def model_chain_for_role(role: str) -> list[dict[str, str]]:
+    config = read_model_router_config()
+    role_chain = config.get("roles", {}).get(role)
+    chain_source = role_chain if isinstance(role_chain, list) and role_chain else config.get("default_chain", [])
+
+    chain = [normalize_model_chain_entry(item) for item in chain_source if isinstance(item, dict)]
+    if not chain:
+        chain = [{"backend": "codex", "model": ""}]
+
+    max_attempts = max(int(config.get("max_model_attempts_per_task", 3)), 1)
+    return chain[:max_attempts]
+
+
+def read_quota_policy() -> dict[str, Any]:
+    data = _load_json_object(QUOTA_POLICY_FILE)
+    return {
+        "defer_on_exhausted_models": bool(data.get("defer_on_exhausted_models", True)),
+        "defer_minutes_on_exhausted_models": int(
+            data.get("defer_minutes_on_exhausted_models", DEFAULT_MODEL_DEFER_MINUTES)
+        ),
+        "quota_error_markers": data.get(
+            "quota_error_markers",
+            [
+                "rate limit",
+                "quota",
+                "limit exceeded",
+                "too many requests",
+                "429",
+                "insufficient credits",
+            ],
+        ),
+    }
+
+
+def is_quota_error(stderr: str) -> bool:
+    policy = read_quota_policy()
+    markers = policy.get("quota_error_markers", [])
+    if not isinstance(markers, list):
+        markers = []
+    lowered = (stderr or "").lower()
+    return any(isinstance(marker, str) and marker.lower() in lowered for marker in markers)
+
+
+def parse_iso_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def is_task_deferred(task: dict[str, Any]) -> bool:
+    metadata = task.get("metadata") or {}
+    retry_at = parse_iso_datetime(str(metadata.get("retry_at", "")).strip())
+    if not retry_at:
+        return False
+    return retry_at > datetime.now(timezone.utc)
+
+
+def set_task_retry(task: dict[str, Any], defer_minutes: int, reason: str) -> None:
+    metadata = task.setdefault("metadata", {})
+    retry_at = datetime.now(timezone.utc) + timedelta(minutes=max(defer_minutes, 1))
+    metadata["retry_at"] = retry_at.isoformat(timespec="seconds")
+    task["status"] = "queued"
+    task["updated_at"] = utc_now()
+    task["started_at"] = None
+    task["finished_at"] = None
+    task["error"] = reason
+
+
+def _same_session_model(role_state: dict[str, Any], backend: str, model: str) -> bool:
+    existing_backend = str(role_state.get("session_backend", "")).strip().lower()
+    existing_model = str(role_state.get("session_model", "")).strip()
+    if not existing_backend and role_state.get("session_id"):
+        existing_backend = "codex"
+    return existing_backend == backend.strip().lower() and existing_model == model.strip()
 
 
 def load_stage_template(role: str) -> str:
@@ -386,20 +511,36 @@ def build_task_compression_summary(task: dict[str, Any], contract: dict[str, Any
     validation_text = ", ".join(validation_items[:3]) if validation_items else "not reported"
 
     raw_acceptance = contract.get("acceptance_criteria")
-    acceptance_criteria = [item for item in raw_acceptance if isinstance(item, str)] if isinstance(raw_acceptance, list) else []
+    acceptance_criteria = (
+        [item for item in raw_acceptance if isinstance(item, str)]
+        if isinstance(raw_acceptance, list)
+        else []
+    )
     acceptance_status = _infer_acceptance_status(acceptance_criteria)
     acceptance_text = f"{acceptance_status}; criteria_count={len(acceptance_criteria)}"
 
     raw_risks = contract.get("risks")
-    risks = [item for item in raw_risks if isinstance(item, str) and item.strip()] if isinstance(raw_risks, list) else []
+    risks = (
+        [item for item in raw_risks if isinstance(item, str) and item.strip()]
+        if isinstance(raw_risks, list)
+        else []
+    )
     risks_text = ", ".join(risks[:3]) if risks else "none reported"
 
     raw_open_questions = contract.get("open_questions")
-    open_questions = [item for item in raw_open_questions if isinstance(item, str) and item.strip()] if isinstance(raw_open_questions, list) else []
+    open_questions = (
+        [item for item in raw_open_questions if isinstance(item, str) and item.strip()]
+        if isinstance(raw_open_questions, list)
+        else []
+    )
     open_questions_text = ", ".join(open_questions[:2]) if open_questions else "none reported"
 
     raw_handoff_to = contract.get("handoff_to")
-    handoff_to = [item for item in raw_handoff_to if isinstance(item, str) and item.strip()] if isinstance(raw_handoff_to, list) else []
+    handoff_to = (
+        [item for item in raw_handoff_to if isinstance(item, str) and item.strip()]
+        if isinstance(raw_handoff_to, list)
+        else []
+    )
     next_owner = handoff_to[0] if handoff_to else ""
 
     next_actions: list[str] = []
@@ -570,6 +711,8 @@ def new_state() -> dict[str, Any]:
         "roles": {
             role_id: {
                 "session_id": None,
+                "session_backend": None,
+                "session_model": None,
                 "state": "idle",
                 "last_active_at": None,
                 "tasks_completed": 0,
@@ -609,10 +752,25 @@ def ensure_state_schema(state: dict[str, Any]) -> bool:
         if role not in state["roles"]:
             state["roles"][role] = {
                 "session_id": None,
+                "session_backend": None,
+                "session_model": None,
                 "state": "idle",
                 "last_active_at": None,
                 "tasks_completed": 0,
             }
+            changed = True
+
+    for role_data in state["roles"].values():
+        if "session_backend" not in role_data:
+            role_data["session_backend"] = None
+            changed = True
+        if "session_model" not in role_data:
+            role_data["session_model"] = None
+            changed = True
+        if not role_data.get("session_backend") and role_data.get("session_id"):
+            role_data["session_backend"] = "codex"
+            if role_data.get("session_model") is None:
+                role_data["session_model"] = ""
             changed = True
 
     if "tasks" not in state:
@@ -712,6 +870,8 @@ def ensure_role(state: dict[str, Any], role: str) -> None:
     if role not in state["roles"]:
         state["roles"][role] = {
             "session_id": None,
+            "session_backend": None,
+            "session_model": None,
             "state": "idle",
             "last_active_at": None,
             "tasks_completed": 0,
@@ -946,7 +1106,7 @@ def is_task_ready(state: dict[str, Any], task: dict[str, Any]) -> bool:
 
 def next_queued_task(state: dict[str, Any]) -> dict[str, Any] | None:
     for task in state["tasks"]:
-        if task["status"] == "queued" and is_task_ready(state, task):
+        if task["status"] == "queued" and not is_task_deferred(task) and is_task_ready(state, task):
             return task
     return None
 
@@ -955,7 +1115,7 @@ def queued_but_blocked(state: dict[str, Any]) -> list[dict[str, Any]]:
     return [
         task
         for task in state["tasks"]
-        if task["status"] == "queued" and not is_task_ready(state, task)
+        if task["status"] == "queued" and (is_task_deferred(task) or not is_task_ready(state, task))
     ]
 
 
@@ -966,18 +1126,28 @@ def load_role_prompt(role: str) -> str:
     return ""
 
 
-def codex_command(prompt: str, session_id: str | None) -> list[str]:
+def codex_command(prompt: str, session_id: str | None, model_override: str = "") -> list[str]:
     cmd: list[str]
     if session_id:
         cmd = ["codex", "exec", "resume", session_id, prompt]
     else:
         cmd = ["codex", "exec", prompt]
 
-    model = os.getenv("CODEX_MODEL", "").strip()
+    model = model_override.strip() or os.getenv("CODEX_MODEL", "").strip()
     if model:
         cmd.extend(["-m", model])
 
     cmd.extend(["--json", "--dangerously-bypass-approvals-and-sandbox"])
+    return cmd
+
+
+def opencode_command(prompt: str, session_id: str | None, model_override: str = "") -> list[str]:
+    cmd: list[str] = ["opencode", "run", prompt, "--format", "json"]
+    model = model_override.strip()
+    if model:
+        cmd.extend(["--model", model])
+    if session_id:
+        cmd.extend(["--session", session_id])
     return cmd
 
 
@@ -1021,7 +1191,11 @@ def build_role_gate_guidance(role: str) -> str:
     role_rules = role_gate_map.get(role, [])
     if not role_rules:
         return ""
-    return "Gate-aligned role requirements:\n" + "\n".join(f"- {rule}" for rule in role_rules) + "\n"
+    return (
+        "Gate-aligned role requirements:\n"
+        + "\n".join(f"- {rule}" for rule in role_rules)
+        + "\n"
+    )
 
 
 def build_output_contract_prompt(task: dict[str, Any], role: str) -> str:
@@ -1030,7 +1204,8 @@ def build_output_contract_prompt(task: dict[str, Any], role: str) -> str:
         "- Include markdown sections covering: Task Meta, Acceptance Criteria, Artifacts, and Handoff.\n"
         "- Section titles may follow the active stage template wording.\n"
         "- End response with ONE fenced JSON block (```json ... ```).\n"
-        "- JSON required fields: task_id, owner, status, acceptance_criteria, artifacts, risks, handoff_to, next_role_action_items.\n"
+        "- JSON required fields: task_id, owner, status, acceptance_criteria, artifacts, "
+        "risks, handoff_to, next_role_action_items.\n"
         f"- task_id must be exactly {task['id']}.\n"
         f"- owner must be exactly {role}.\n"
     )
@@ -1084,14 +1259,13 @@ def build_handoff_context(state: dict[str, Any], task: dict[str, Any]) -> str:
     return "\n\n".join(chunks)
 
 
-def run_codex_task(
+def build_role_task_prompt(
     role: str,
     task: dict[str, Any],
-    session_id: str | None,
     handoff_context: str,
     workdir: Path,
     correction_feedback: str = "",
-) -> CodexResult:
+) -> str:
     system_prompt = load_orchestrator_system_prompt()
     role_prompt = load_role_prompt(role)
     contract_prompt = build_output_contract_prompt(task, role)
@@ -1123,8 +1297,32 @@ def run_codex_task(
     if prefix_parts:
         prompt = "\n\n".join(prefix_parts + [prompt])
 
-    cmd = codex_command(prompt, session_id)
-    process = subprocess.run(cmd, capture_output=True, text=True, cwd=workdir)
+    return prompt
+
+
+def run_codex_task(
+    role: str,
+    task: dict[str, Any],
+    session_id: str | None,
+    handoff_context: str,
+    workdir: Path,
+    model: str = "",
+    correction_feedback: str = "",
+) -> CodexResult:
+    prompt = build_role_task_prompt(role, task, handoff_context, workdir, correction_feedback)
+    cmd = codex_command(prompt, session_id, model_override=model)
+    try:
+        process = subprocess.run(cmd, capture_output=True, text=True, cwd=workdir)
+    except FileNotFoundError as exc:
+        binary = exc.filename or "codex"
+        return CodexResult(
+            return_code=127,
+            session_id=session_id,
+            message="",
+            stderr=f"{binary} command not found",
+            backend="codex",
+            model=model or os.getenv("CODEX_MODEL", "").strip() or None,
+        )
 
     out_lines = process.stdout.splitlines()
     messages: list[str] = []
@@ -1150,6 +1348,96 @@ def run_codex_task(
         session_id=new_session_id,
         message=message,
         stderr=(process.stderr or "").strip(),
+        backend="codex",
+        model=model or os.getenv("CODEX_MODEL", "").strip() or None,
+    )
+
+
+def run_opencode_task(
+    role: str,
+    task: dict[str, Any],
+    session_id: str | None,
+    handoff_context: str,
+    workdir: Path,
+    model: str,
+    correction_feedback: str = "",
+) -> CodexResult:
+    prompt = build_role_task_prompt(role, task, handoff_context, workdir, correction_feedback)
+    cmd = opencode_command(prompt, session_id, model_override=model)
+    try:
+        process = subprocess.run(cmd, capture_output=True, text=True, cwd=workdir)
+    except FileNotFoundError as exc:
+        binary = exc.filename or "opencode"
+        return CodexResult(
+            return_code=127,
+            session_id=session_id,
+            message="",
+            stderr=f"{binary} command not found",
+            backend="opencode",
+            model=model or None,
+        )
+
+    out_lines = process.stdout.splitlines()
+    messages: list[str] = []
+    new_session_id = session_id
+
+    for line in out_lines:
+        try:
+            data = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+
+        session_value = data.get("sessionID")
+        if isinstance(session_value, str) and session_value.strip():
+            new_session_id = session_value
+
+        if data.get("type") == "text":
+            part = data.get("part", {})
+            text_value = part.get("text") if isinstance(part, dict) else None
+            if isinstance(text_value, str) and text_value.strip():
+                messages.append(text_value.strip())
+
+    message = "\n\n".join(msg for msg in messages if msg).strip()
+    return CodexResult(
+        return_code=process.returncode,
+        session_id=new_session_id,
+        message=message,
+        stderr=(process.stderr or "").strip(),
+        backend="opencode",
+        model=model or None,
+    )
+
+
+def run_model_task(
+    role: str,
+    task: dict[str, Any],
+    session_id: str | None,
+    handoff_context: str,
+    workdir: Path,
+    backend: str,
+    model: str,
+    correction_feedback: str = "",
+) -> CodexResult:
+    normalized = backend.strip().lower()
+    if normalized == "opencode":
+        return run_opencode_task(
+            role=role,
+            task=task,
+            session_id=session_id,
+            handoff_context=handoff_context,
+            workdir=workdir,
+            model=model,
+            correction_feedback=correction_feedback,
+        )
+
+    return run_codex_task(
+        role=role,
+        task=task,
+        session_id=session_id,
+        handoff_context=handoff_context,
+        workdir=workdir,
+        model=model,
+        correction_feedback=correction_feedback,
     )
 
 
@@ -1364,6 +1652,9 @@ def status_team(args: argparse.Namespace) -> int:
     save_state(state)
 
     queued = sum(1 for task in state["tasks"] if task["status"] == "queued")
+    deferred = sum(
+        1 for task in state["tasks"] if task["status"] == "queued" and is_task_deferred(task)
+    )
     running = sum(1 for task in state["tasks"] if task["status"] == "running")
     failed = sum(1 for task in state["tasks"] if task["status"] == "failed")
     done = sum(1 for task in state["tasks"] if task["status"] == "done")
@@ -1388,7 +1679,7 @@ def status_team(args: argparse.Namespace) -> int:
     print(f"Profile: {state['config'].get('profile')}")
     print(f"Started at: {state.get('started_at')}")
     print(f"Stopped at: {state.get('stopped_at')}")
-    print(f"Tasks: queued={queued} running={running} done={done} failed={failed}")
+    print(f"Tasks: queued={queued} deferred={deferred} running={running} done={done} failed={failed}")
     print(f"Pipelines: queued={queued_pipes} running={running_pipes} done={done_pipes} failed={failed_pipes}")
     print(
         "Debates: "
@@ -1400,6 +1691,8 @@ def status_team(args: argparse.Namespace) -> int:
         short_sid = sid[:8] + "..." if sid else "-"
         print(
             f"- {role}: state={info.get('state')} session={short_sid} "
+            f"backend={info.get('session_backend') or '-'} "
+            f"model={info.get('session_model') or '-'} "
             f"completed={info.get('tasks_completed', 0)}"
         )
 
@@ -1455,10 +1748,13 @@ def _dispatch_task_object(state: dict[str, Any], task: dict[str, Any]) -> int:
     role = task["role"]
     ensure_role(state, role)
     workdir = resolve_role_workdir(role)
+    model_chain = model_chain_for_role(role)
 
     task["status"] = "running"
     task["started_at"] = utc_now()
     task["updated_at"] = utc_now()
+    task_metadata = task.setdefault("metadata", {})
+    task_metadata.pop("retry_at", None)
 
     role_state = state["roles"][role]
     role_state["state"] = "busy"
@@ -1475,6 +1771,7 @@ def _dispatch_task_object(state: dict[str, Any], task: dict[str, Any]) -> int:
             "pipeline_id": pipeline_id,
             "debate_id": debate_id,
             "workdir": str(workdir),
+            "model_chain": model_chain,
         },
     )
 
@@ -1483,40 +1780,105 @@ def _dispatch_task_object(state: dict[str, Any], task: dict[str, Any]) -> int:
     result: CodexResult | None = None
     contract: dict[str, Any] | None = None
     contract_errors: list[str] = []
-    correction_feedback = ""
+    attempted_models: list[dict[str, str]] = []
+    exhausted_models: list[dict[str, str]] = []
 
-    while attempts <= MAX_OUTPUT_FORMAT_RETRIES:
-        attempts += 1
-        result = run_codex_task(
-            role,
-            task,
-            role_state.get("session_id"),
-            handoff_context,
-            workdir,
-            correction_feedback=correction_feedback,
-        )
+    for model_index, model_entry in enumerate(model_chain, start=1):
+        backend = str(model_entry.get("backend", "codex")).strip().lower() or "codex"
+        model = str(model_entry.get("model", "")).strip()
+        attempted_models.append({"backend": backend, "model": model})
 
-        if result.session_id:
-            role_state["session_id"] = result.session_id
-
-        if result.return_code != 0:
-            break
-
-        contract = extract_output_contract(result.message)
-        contract_errors = validate_task_output(role, task, result.message, contract)
-        if not contract_errors:
-            break
+        session_for_attempt = None
+        if _same_session_model(role_state, backend, model):
+            existing_session = role_state.get("session_id")
+            if isinstance(existing_session, str) and existing_session.strip():
+                session_for_attempt = existing_session
 
         append_event(
-            "task_output_contract_invalid",
+            "task_model_attempt_started",
             {
                 "task_id": task["id"],
                 "role": role,
-                "attempt": attempts,
-                "errors": contract_errors,
+                "model_index": model_index,
+                "backend": backend,
+                "model": model,
             },
         )
-        correction_feedback = format_contract_error_feedback(contract_errors, task, role)
+
+        correction_feedback = ""
+        model_contract_errors: list[str] = []
+
+        for format_attempt in range(1, MAX_OUTPUT_FORMAT_RETRIES + 2):
+            attempts += 1
+            result = run_model_task(
+                role=role,
+                task=task,
+                session_id=session_for_attempt,
+                handoff_context=handoff_context,
+                workdir=workdir,
+                backend=backend,
+                model=model,
+                correction_feedback=correction_feedback,
+            )
+
+            if result.session_id:
+                session_for_attempt = result.session_id
+
+            if result.return_code != 0:
+                append_event(
+                    "task_model_attempt_failed",
+                    {
+                        "task_id": task["id"],
+                        "role": role,
+                        "backend": backend,
+                        "model": model,
+                        "model_index": model_index,
+                        "attempt": attempts,
+                        "stderr": result.stderr,
+                    },
+                )
+                break
+
+            contract = extract_output_contract(result.message)
+            model_contract_errors = validate_task_output(role, task, result.message, contract)
+            if not model_contract_errors:
+                role_state["session_id"] = session_for_attempt
+                role_state["session_backend"] = result.backend
+                role_state["session_model"] = result.model or ""
+                contract_errors = []
+                break
+
+            append_event(
+                "task_output_contract_invalid",
+                {
+                    "task_id": task["id"],
+                    "role": role,
+                    "backend": backend,
+                    "model": model,
+                    "model_index": model_index,
+                    "attempt": attempts,
+                    "format_attempt": format_attempt,
+                    "errors": model_contract_errors,
+                },
+            )
+            correction_feedback = format_contract_error_feedback(model_contract_errors, task, role)
+
+        if result and result.return_code == 0 and not model_contract_errors:
+            break
+
+        contract_errors = model_contract_errors
+        if result and result.return_code != 0 and is_quota_error(result.stderr):
+            exhausted_models.append({"backend": backend, "model": model})
+            append_event(
+                "task_model_quota_exhausted",
+                {
+                    "task_id": task["id"],
+                    "role": role,
+                    "backend": backend,
+                    "model": model,
+                    "model_index": model_index,
+                },
+            )
 
     if not result:
         task["status"] = "failed"
@@ -1530,11 +1892,14 @@ def _dispatch_task_object(state: dict[str, Any], task: dict[str, Any]) -> int:
     if result.return_code == 0 and not contract_errors:
         task["status"] = "done"
         task["error"] = None
-        content = result.message or "No message returned by Codex."
+        content = result.message or "No message returned by model runner."
         output_path = write_task_output(task["id"], content)
         task["output_path"] = output_path
         task["finished_at"] = utc_now()
         metadata = task.setdefault("metadata", {})
+        metadata["runner_backend"] = result.backend
+        metadata["runner_model"] = result.model
+        metadata["attempted_models"] = attempted_models
         metadata["output_contract"] = contract
         if contract:
             compression_content = build_task_compression_summary(task, contract)
@@ -1559,6 +1924,8 @@ def _dispatch_task_object(state: dict[str, Any], task: dict[str, Any]) -> int:
                 "workdir": str(workdir),
                 "output_path": output_path,
                 "attempts": attempts,
+                "backend": result.backend,
+                "model": result.model,
             },
         )
         print(f"Completed {task['id']} ({role})")
@@ -1566,26 +1933,59 @@ def _dispatch_task_object(state: dict[str, Any], task: dict[str, Any]) -> int:
         if contract:
             print(f"Compression: {metadata.get('compression_path')}")
     else:
-        task["status"] = "failed"
-        if contract_errors:
-            task["error"] = "Output contract invalid: " + "; ".join(contract_errors)
-        else:
-            task["error"] = result.stderr or "Codex execution failed"
-        task["finished_at"] = utc_now()
-        append_event(
-            "task_failed",
-            {
-                "task_id": task["id"],
-                "role": role,
-                "pipeline_id": pipeline_id,
-                "debate_id": debate_id,
-                "workdir": str(workdir),
-                "error": task["error"],
-                "attempts": attempts,
-            },
+        quota_policy = read_quota_policy()
+        all_models_exhausted = (
+            len(attempted_models) > 0 and len(exhausted_models) == len(attempted_models)
         )
-        print(f"Failed {task['id']} ({role})", file=sys.stderr)
-        print(task["error"], file=sys.stderr)
+        if all_models_exhausted and quota_policy.get("defer_on_exhausted_models", True):
+            defer_minutes = int(quota_policy.get("defer_minutes_on_exhausted_models", DEFAULT_MODEL_DEFER_MINUTES))
+            reason = (
+                "All configured models hit quota/rate limits. "
+                f"Deferred for {defer_minutes} minutes."
+            )
+            set_task_retry(task, defer_minutes, reason)
+            metadata = task.setdefault("metadata", {})
+            metadata["attempted_models"] = attempted_models
+            metadata["quota_exhausted_models"] = exhausted_models
+            append_event(
+                "task_deferred_quota_exhausted",
+                {
+                    "task_id": task["id"],
+                    "role": role,
+                    "retry_at": metadata.get("retry_at"),
+                    "attempted_models": attempted_models,
+                },
+            )
+            print(
+                f"Deferred {task['id']} ({role}) until {metadata.get('retry_at')} "
+                "after model quota exhaustion."
+            )
+        else:
+            task["status"] = "failed"
+            if contract_errors:
+                task["error"] = "Output contract invalid: " + "; ".join(contract_errors)
+            else:
+                task["error"] = result.stderr or "Model execution failed"
+            task["finished_at"] = utc_now()
+            metadata = task.setdefault("metadata", {})
+            metadata["attempted_models"] = attempted_models
+            append_event(
+                "task_failed",
+                {
+                    "task_id": task["id"],
+                    "role": role,
+                    "pipeline_id": pipeline_id,
+                    "debate_id": debate_id,
+                    "workdir": str(workdir),
+                    "error": task["error"],
+                    "attempts": attempts,
+                    "backend": result.backend,
+                    "model": result.model,
+                    "attempted_models": attempted_models,
+                },
+            )
+            print(f"Failed {task['id']} ({role})", file=sys.stderr)
+            print(task["error"], file=sys.stderr)
 
     task["session_id"] = role_state.get("session_id")
     task["updated_at"] = utc_now()
@@ -1605,7 +2005,11 @@ def _dispatch_task_object(state: dict[str, Any], task: dict[str, Any]) -> int:
         recompute_debate_status(state, str(debate_id))
 
     save_state(state)
-    return 0 if result.return_code == 0 else result.return_code
+    if task["status"] == "done":
+        return 0
+    if task["status"] == "queued":
+        return 0
+    return result.return_code if result.return_code != 0 else 1
 
 
 def dispatch(args: argparse.Namespace) -> int:
@@ -1623,6 +2027,10 @@ def dispatch(args: argparse.Namespace) -> int:
         if task["status"] != "queued":
             print(f"Task {task['id']} is not queued (status={task['status']}).")
             return 1
+        if is_task_deferred(task):
+            retry_at = (task.get("metadata") or {}).get("retry_at")
+            print(f"Task {task['id']} is deferred until {retry_at}.")
+            return 0
         if not is_task_ready(state, task):
             print(f"Task {task['id']} is blocked by unfinished dependencies.")
             return 1
@@ -1635,7 +2043,11 @@ def dispatch(args: argparse.Namespace) -> int:
             print("No ready queued task. Blocked tasks:")
             for item in blocked[:5]:
                 deps = ", ".join(task_dependencies(item)) or "-"
-                print(f"- {item['id']} [{item['role']}] waiting for {deps}")
+                retry_at = (item.get("metadata") or {}).get("retry_at")
+                if retry_at and is_task_deferred(item):
+                    print(f"- {item['id']} [{item['role']}] deferred until {retry_at}")
+                else:
+                    print(f"- {item['id']} [{item['role']}] waiting for {deps}")
             if len(blocked) > 5:
                 print(f"... and {len(blocked) - 5} more")
         else:
@@ -1773,7 +2185,11 @@ def drain_queue(args: argparse.Namespace) -> int:
                 print("Queue has blocked tasks only.")
                 for item in blocked[:5]:
                     deps = ", ".join(task_dependencies(item)) or "-"
-                    print(f"- {item['id']} [{item['role']}] waiting for {deps}")
+                    retry_at = (item.get("metadata") or {}).get("retry_at")
+                    if retry_at and is_task_deferred(item):
+                        print(f"- {item['id']} [{item['role']}] deferred until {retry_at}")
+                    else:
+                        print(f"- {item['id']} [{item['role']}] waiting for {deps}")
                 if len(blocked) > 5:
                     print(f"... and {len(blocked) - 5} more")
             else:
@@ -1857,6 +2273,10 @@ def queue_view(state: dict[str, Any]) -> None:
     for task in queued:
         deps = task_dependencies(task)
         dep_text = f" deps={','.join(deps)}" if deps else ""
+        metadata = task.get("metadata") or {}
+        retry_at = str(metadata.get("retry_at", "")).strip()
+        if retry_at and is_task_deferred(task):
+            dep_text += f" retry_at={retry_at}"
         print(f"- {task['id']} [{task['role']}] {task['title']}{dep_text}")
 
 
@@ -1864,7 +2284,10 @@ def agents_view(state: dict[str, Any]) -> None:
     for role, info in sorted(state["roles"].items()):
         sid = info.get("session_id")
         short = sid[:8] + "..." if sid else "-"
-        print(f"- {role}: state={info.get('state')} session={short}")
+        print(
+            f"- {role}: state={info.get('state')} session={short} "
+            f"backend={info.get('session_backend') or '-'} model={info.get('session_model') or '-'}"
+        )
 
 
 def print_task_report(task_id: str, max_chars: int = 5000) -> None:

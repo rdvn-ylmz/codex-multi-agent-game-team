@@ -1,6 +1,6 @@
-# Codex Multi-Session Team (Low-Spec, Codex-Only)
+# Codex Multi-Session Team (Low-Spec, Codex-First + Free Fallback)
 
-This repository bootstraps a Codex-only multi-agent workflow that runs in a single terminal chat while coordinating role-based sessions.
+This repository bootstraps a multi-agent workflow that runs in a single terminal chat while coordinating role-based sessions. It uses Codex first, then can fall back to free OpenCode models when Codex (or another model) hits limits.
 
 ## What is included
 
@@ -18,6 +18,8 @@ This repository bootstraps a Codex-only multi-agent workflow that runs in a sing
 - `.github/workflows/quality-gates.yml`: CI quality gates
 - `scripts/lint.sh`, `scripts/test.sh`, `scripts/security_scan.sh`, `scripts/perf_budget.sh`
 - `team/config/*.yaml`, `team/config/workspaces.json`: runtime configs
+- `team/config/model_router.json`: per-role model/backend fallback chain
+- `team/config/quota_policy.json`: quota detection markers and defer policy
 - `team/config/output_contract.schema.json`: machine-readable output schema
 - `team/templates/stages/*.md`: role-specific stage templates
 - `team/prompts/orchestrator_system.md`, `team/prompts/council_*.md`: orchestration and debate personas
@@ -184,6 +186,18 @@ Required JSON fields:
 - `next_role_action_items`
 
 If JSON contract is invalid, orchestrator retries once (`MAX_OUTPUT_FORMAT_RETRIES=1`) and fails the task if still invalid.
+
+## Model routing and quota defer
+
+- Model chain config: `team/config/model_router.json`
+- Quota policy config: `team/config/quota_policy.json`
+- Dispatch behavior:
+  1. Try configured models in order for the role.
+  2. If one model fails with quota/rate-limit, automatically try the next model.
+  3. If all models are quota-exhausted, task is deferred (`retry_at`) instead of failed.
+- Queue/Status behavior:
+  - deferred tasks are skipped by normal dispatch/drain until `retry_at`.
+  - `status` output shows `deferred=<count>`.
 
 ## Quality gates
 

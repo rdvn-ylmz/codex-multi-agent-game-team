@@ -1,0 +1,41 @@
+{
+  "default_chain": [
+    {
+      "backend": "codex",
+      "model": ""
+    },
+    {
+      "backend": "opencode",
+      "model": "opencode/kimi-k2.5-free"
+    },
+    {
+      "backend": "opencode",
+      "model": "opencode/glm-5-free"
+    },
+    {
+      "backend": "opencode",
+      "model": "opencode/minimax-m2.5-free"
+    }
+  ],
+  "roles": {
+    "coder": [
+      {
+        "backend": "codex",
+        "model": ""
+      },
+      {
+        "backend": "opencode",
+        "model": "opencode/kimi-k2.5-free"
+      },
+      {
+        "backend": "opencode",
+        "model": "opencode/glm-5-free"
+      },
+      {
+        "backend": "opencode",
+        "model": "opencode/minimax-m2.5-free"
+      }
+    ]
+  },
+  "max_model_attempts_per_task": 4
+}
