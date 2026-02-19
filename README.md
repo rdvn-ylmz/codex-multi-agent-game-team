@@ -10,16 +10,22 @@ This repository bootstraps a multi-agent workflow that runs in a single terminal
 - `scripts/resume_team.sh`: resume after shutdown
 - `scripts/team_status.sh`: runtime status
 - `scripts/run_pipeline.sh`: one-command pipeline create + execute
+- `scripts/run_gameplay_vertical_slice.sh`: one-command pipeline using a stronger playable-game brief
 - `scripts/run_fresh_project.sh`: create isolated project folder + run from scratch
 - `scripts/start_team_tmux.sh`: start tmux multi-pane cockpit
 - `scripts/stop_team_tmux.sh`: stop tmux cockpit + team
 - `scripts/setup_workspaces.sh`: create per-role git workspaces (worktree)
 - `scripts/workspaces_status.sh`: inspect role workspaces
+- `team/tools/run_tool.py`: tool adapter queue for music/image asset jobs
+- `scripts/tool_worker.sh`: run tool queue worker
+- `scripts/tool_status.sh`: inspect tool queue + summary
+- `scripts/live_monitor.sh`: web monitor (`/api/snapshot`) for tasks/events/tool-jobs/assets
 - `.github/workflows/quality-gates.yml`: CI quality gates
 - `scripts/lint.sh`, `scripts/test.sh`, `scripts/security_scan.sh`, `scripts/perf_budget.sh`
 - `team/config/*.yaml`, `team/config/workspaces.json`: runtime configs
 - `team/config/model_router.json`: per-role model/backend fallback chain
 - `team/config/quota_policy.json`: quota detection markers and defer policy
+- `team/config/tools.json`: external/builtin asset tool registry
 - `team/config/output_contract.schema.json`: machine-readable output schema
 - `team/templates/stages/*.md`: role-specific stage templates
 - `team/prompts/orchestrator_system.md`, `team/prompts/council_*.md`: orchestration and debate personas
@@ -58,6 +64,7 @@ This gives you an on-screen multi-window environment:
 1. `control`: interactive chat + status + global events
 2. `agents`: role event streams (concept/coder/reviewer/qa)
 3. `debate`: council agent streams (red/blue/green + orchestrator)
+4. `tools`: tool queue status + asset manifest + filtered events
 
 Start:
 
@@ -130,6 +137,12 @@ Optional flags:
 - `--stop-when-done`
 - `--skip-auth-check`
 
+Run with the included stronger playable-game brief:
+
+```bash
+./scripts/run_gameplay_vertical_slice.sh --profile low-spec
+```
+
 Run in a brand-new isolated project directory (recommended for fresh starts):
 
 ```bash
@@ -198,6 +211,59 @@ If JSON contract is invalid, orchestrator retries once (`MAX_OUTPUT_FORMAT_RETRI
 - Queue/Status behavior:
   - deferred tasks are skipped by normal dispatch/drain until `retry_at`.
   - `status` output shows `deferred=<count>`.
+
+## Tool adapter (music/image queue)
+
+Submit jobs:
+
+```bash
+python3 team/tools/run_tool.py submit \
+  --tool music_tone \
+  --prompt "90bpm boss intro loop" \
+  --task-id TASK-1234 \
+  --role narrative \
+  --param duration_sec=8 \
+  --param frequency_hz=280
+
+python3 team/tools/run_tool.py submit \
+  --tool image_svg \
+  --prompt "Neon asteroid field key art" \
+  --param width=1280 \
+  --param height=720
+```
+
+Run worker:
+
+```bash
+./scripts/tool_worker.sh 2           # run up to 2 jobs and exit
+./scripts/tool_worker.sh --loop      # keep processing queue
+```
+
+Inspect queue and assets:
+
+```bash
+./scripts/tool_status.sh
+python3 team/tools/run_tool.py manifest --limit 20
+```
+
+Generated files:
+
+- jobs state: `${TEAM_STATE_PATH%/*}/tool_jobs.json`
+- assets: `${TEAM_PROJECT_ROOT}/assets/...`
+- manifest: `${TEAM_PROJECT_ROOT}/assets/manifest.json`
+
+## Live monitor
+
+Start:
+
+```bash
+./scripts/live_monitor.sh --host 127.0.0.1 --port 8787
+```
+
+Open:
+
+- `http://127.0.0.1:8787`
+- JSON snapshot: `http://127.0.0.1:8787/api/snapshot`
 
 ## Quality gates
 

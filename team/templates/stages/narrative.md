@@ -50,10 +50,17 @@ Short strings for:
 - Tooltips
 - Error messages (if any)
 
+### OPTIONAL AUDIO/VISUAL DIRECTIONS
+- If soundtrack or key-art is needed, submit tool jobs and include IDs:
+  - `python3 team/tools/run_tool.py submit --tool music_tone --prompt "<scene mood>"`
+  - `python3 team/tools/run_tool.py submit --tool image_svg --prompt "<key art frame>"`
+- Keep prompts concise and implementation-ready.
+
 ### ARTIFACTS (REQUIRED)
 Produce these files:
 - docs/narrative.md
 - assets/text/ui_copy.md
+- assets/manifest.json (if tool jobs generated assets)
 
 Provide file contents in your response (ready to paste).
 

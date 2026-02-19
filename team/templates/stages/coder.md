@@ -35,6 +35,12 @@ If key info is missing, ask up to 5 concise questions first.
 - Run what you can quickly (lint, unit tests subset).
 - If you skip a check, explain why and what CI should cover.
 
+### 4) Optional asset tooling
+- If audio/visual assets are needed, use tool adapter jobs:
+  - `python3 team/tools/run_tool.py submit --tool <music_tone|image_svg> --prompt "<prompt>"`
+  - `python3 team/tools/run_tool.py run-one`
+- Record job IDs and output paths in `ARTIFACTS`.
+
 ---
 
 ## REQUIRED OUTPUT (artifact-first)
@@ -54,6 +60,8 @@ If key info is missing, ask up to 5 concise questions first.
 - Commands run:
   - <command>
   - <command>
+- Tool jobs (if any):
+  - <TOOL-ID> -> <asset/path>
 - Notes:
   - <important notes for reviewers/QA>
 

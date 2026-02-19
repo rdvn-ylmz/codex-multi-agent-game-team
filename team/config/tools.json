@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "worker": {
+    "poll_interval_sec": 2,
+    "max_attempts": 2,
+    "timeout_sec": 180
+  },
+  "tools": {
+    "music_tone": {
+      "kind": "builtin_music_tone",
+      "default_output_dir": "assets/audio",
+      "default_ext": ".wav",
+      "license": "generated-by-tool",
+      "model": "builtin/music_tone/v1"
+    },
+    "image_svg": {
+      "kind": "builtin_image_svg",
+      "default_output_dir": "assets/images",
+      "default_ext": ".svg",
+      "license": "generated-by-tool",
+      "model": "builtin/image_svg/v1"
+    }
+  }
+}

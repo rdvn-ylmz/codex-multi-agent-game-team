@@ -69,6 +69,11 @@ tmux split-window -v -t "$SESSION_NAME:debate.0" "cd '$ROOT_DIR' && ./scripts/wa
 tmux split-window -v -t "$SESSION_NAME:debate.1" "cd '$ROOT_DIR' && ./scripts/watch_role_events.sh orchestrator"
 tmux select-layout -t "$SESSION_NAME:debate" tiled
 
+tmux new-window -t "$SESSION_NAME" -n tools "cd '$ROOT_DIR' && watch -n 2 ./scripts/tool_status.sh"
+tmux split-window -h -t "$SESSION_NAME:tools" "cd '$ROOT_DIR' && watch -n 2 'python3 team/tools/run_tool.py manifest --limit 12'"
+tmux split-window -v -t "$SESSION_NAME:tools.0" "cd '$ROOT_DIR' && tail -n 200 -F '$EVENT_FILE' | rg --line-buffered 'tool_job|task_'"
+tmux select-layout -t "$SESSION_NAME:tools" tiled
+
 if [[ "$NO_ATTACH" -eq 0 ]]; then
   tmux attach -t "$SESSION_NAME"
 else
