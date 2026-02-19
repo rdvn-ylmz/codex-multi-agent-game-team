@@ -1,10 +1,6 @@
 {
   "default_chain": [
     {
-      "backend": "codex",
-      "model": ""
-    },
-    {
       "backend": "opencode",
       "model": "opencode/kimi-k2.5-free"
     },
@@ -20,10 +16,6 @@
   "roles": {
     "coder": [
       {
-        "backend": "codex",
-        "model": ""
-      },
-      {
         "backend": "opencode",
         "model": "opencode/kimi-k2.5-free"
       },
@@ -37,5 +29,5 @@
       }
     ]
   },
-  "max_model_attempts_per_task": 4
+  "max_model_attempts_per_task": 3
 }
