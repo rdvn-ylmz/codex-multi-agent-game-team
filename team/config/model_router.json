@@ -16,16 +16,8 @@
   "roles": {
     "coder": [
       {
-        "backend": "opencode",
-        "model": "opencode/glm-5-free"
-      },
-      {
-        "backend": "opencode",
-        "model": "opencode/kimi-k2.5-free"
-      },
-      {
-        "backend": "opencode",
-        "model": "opencode/minimax-m2.5-free"
+        "backend": "codex",
+        "model": ""
       }
     ],
     "reviewer": [
