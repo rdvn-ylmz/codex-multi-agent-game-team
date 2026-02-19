@@ -2,11 +2,11 @@
   "default_chain": [
     {
       "backend": "opencode",
-      "model": "opencode/kimi-k2.5-free"
+      "model": "opencode/glm-5-free"
     },
     {
       "backend": "opencode",
-      "model": "opencode/glm-5-free"
+      "model": "opencode/kimi-k2.5-free"
     },
     {
       "backend": "opencode",
@@ -17,15 +17,45 @@
     "coder": [
       {
         "backend": "opencode",
-        "model": "opencode/kimi-k2.5-free"
-      },
-      {
-        "backend": "opencode",
         "model": "opencode/glm-5-free"
       },
       {
         "backend": "opencode",
+        "model": "opencode/kimi-k2.5-free"
+      },
+      {
+        "backend": "opencode",
         "model": "opencode/minimax-m2.5-free"
+      }
+    ],
+    "reviewer": [
+      {
+        "backend": "codex",
+        "model": ""
+      }
+    ],
+    "qa": [
+      {
+        "backend": "codex",
+        "model": ""
+      }
+    ],
+    "security": [
+      {
+        "backend": "codex",
+        "model": ""
+      }
+    ],
+    "sre": [
+      {
+        "backend": "codex",
+        "model": ""
+      }
+    ],
+    "devops": [
+      {
+        "backend": "codex",
+        "model": ""
       }
     ]
   },

@@ -65,6 +65,7 @@ DEFAULT_DEBATE_MODERATOR = "orchestrator"
 
 MAX_OUTPUT_FORMAT_RETRIES = int(os.getenv("MAX_OUTPUT_FORMAT_RETRIES", "1"))
 DEFAULT_MODEL_DEFER_MINUTES = int(os.getenv("MODEL_DEFER_MINUTES", "45"))
+DEFAULT_MODEL_RUN_TIMEOUT_SEC = int(os.getenv("MODEL_RUN_TIMEOUT_SEC", "180"))
 OUTPUT_CONTRACT_REQUIRED_FIELDS = ["task_id", "owner", "acceptance_criteria", "artifacts"]
 OUTPUT_CONTRACT_ALLOWED_STATUS = {
     "done",
@@ -1311,8 +1312,15 @@ def run_codex_task(
 ) -> CodexResult:
     prompt = build_role_task_prompt(role, task, handoff_context, workdir, correction_feedback)
     cmd = codex_command(prompt, session_id, model_override=model)
+    timeout_sec = max(DEFAULT_MODEL_RUN_TIMEOUT_SEC, 30)
     try:
-        process = subprocess.run(cmd, capture_output=True, text=True, cwd=workdir)
+        process = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            cwd=workdir,
+            timeout=timeout_sec,
+        )
     except FileNotFoundError as exc:
         binary = exc.filename or "codex"
         return CodexResult(
@@ -1320,6 +1328,15 @@ def run_codex_task(
             session_id=session_id,
             message="",
             stderr=f"{binary} command not found",
+            backend="codex",
+            model=model or os.getenv("CODEX_MODEL", "").strip() or None,
+        )
+    except subprocess.TimeoutExpired:
+        return CodexResult(
+            return_code=124,
+            session_id=session_id,
+            message="",
+            stderr=f"codex run timed out after {timeout_sec} seconds",
             backend="codex",
             model=model or os.getenv("CODEX_MODEL", "").strip() or None,
         )
@@ -1364,8 +1381,15 @@ def run_opencode_task(
 ) -> CodexResult:
     prompt = build_role_task_prompt(role, task, handoff_context, workdir, correction_feedback)
     cmd = opencode_command(prompt, session_id, model_override=model)
+    timeout_sec = max(DEFAULT_MODEL_RUN_TIMEOUT_SEC, 30)
     try:
-        process = subprocess.run(cmd, capture_output=True, text=True, cwd=workdir)
+        process = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            cwd=workdir,
+            timeout=timeout_sec,
+        )
     except FileNotFoundError as exc:
         binary = exc.filename or "opencode"
         return CodexResult(
@@ -1373,6 +1397,15 @@ def run_opencode_task(
             session_id=session_id,
             message="",
             stderr=f"{binary} command not found",
+            backend="opencode",
+            model=model or None,
+        )
+    except subprocess.TimeoutExpired:
+        return CodexResult(
+            return_code=124,
+            session_id=session_id,
+            message="",
+            stderr=f"opencode run timed out after {timeout_sec} seconds",
             backend="opencode",
             model=model or None,
         )
